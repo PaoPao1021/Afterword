@@ -4,6 +4,8 @@ import { filterWords, wordTable } from './word-list.js';
 const $ = (selector, root = document) => root.querySelector(selector);
 const h = value => String(value ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 const icons = {
+  bookmark: '<path d="M6 3h12v18l-6-4-6 4z"/>',
+  pen: '<path d="m15 4 5 5M4 20l5-1L21 7l-5-5L4 14z"/>',
   book: '<path d="M3 5h6a3 3 0 0 1 3 3v13a4 4 0 0 0-4-2H3zM21 5h-6a3 3 0 0 0-3 3v13a4 4 0 0 1 4-2h5z"/>',
   grid: '<rect x="3" y="3" width="7" height="7" rx="1.5"/><rect x="14" y="3" width="7" height="7" rx="1.5"/><rect x="3" y="14" width="7" height="7" rx="1.5"/><rect x="14" y="14" width="7" height="7" rx="1.5"/>',
   layers: '<path d="m12 3 9 5-9 5-9-5zM3 12l9 5 9-5M3 16l9 5 9-5"/>',
@@ -27,6 +29,7 @@ const main = $('#main'), modal = $('#modal');
 let data = { papers: [], words: [], session: null };
 let filter = 'all', query = '', paperQuery = '', draft = null, restoreData = null, busy = false, toastTimer;
 let previousRoute = '', pendingNavigation = false;
+let practicePanel = 'context';
 let modelStatus = { ready: false, state: 'disabled', message: '接口已预留，暂未启用。', maxSourceLength: 20000 };
 
 async function api(path, body, method = 'POST') {
@@ -194,17 +197,40 @@ function renderPractice(state) {
   const hiddenEnglish = ['reverse', 'spell'].includes(state.phase) && !state.pending;
   const total = state.items.length;
   const completed = state.phase === 'spell' ? state.passedZh.length : state.passedEn.length;
-  const label = state.phase === 'spell' ? '看释义，拼写英文' : state.phase === 'choice' ? '选出它在词库中的释义' : state.phase === 'reverse' ? '看释义，在心里说出英文' : '看英文，先回忆它的意思';
   const reveal = !!state.pending;
   const correction = reveal && state.pending.correct && state.phase !== 'spell';
-  const keyboardHint = reveal ? `空格 / Enter 继续${correction ? ' · C 记错了' : ''}` : state.phase === 'choice' ? '数字 1—4 选择 · 空格 看答案' : state.phase === 'spell' ? 'Enter 检查拼写' : '1 不认识 · 2 模糊 · 3 认识';
-  const options = state.phase === 'choice' && !reveal ? `<div class="meaning-choices">${track.options.map((option, index) => `<button data-action="answer-choice" data-index="${index}"><kbd>${index + 1}</kbd><span>${h(option)}</span></button>`).join('')}</div>${track.options.length < 4 ? '<p class="helper-note">词库可用的不同释义不足四项，不生成虚假干扰项。</p>' : ''}` : '';
-  const spelling = state.phase === 'spell' && !reveal ? '<form id="spelling-form"><label for="spelling-answer">英文单词或短语</label><div><input id="spelling-answer" name="answer" type="text" maxlength="300" autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false" placeholder="在这里拼写…" required><button type="submit" class="button primary">检查拼写</button></div></form>' : '';
-  main.innerHTML = `<section class="focus-shell"><header class="focus-header"><div class="actions">${button('退出专注', 'pause-study', 'text', '', 'back')}<span class="focus-brand">Afterword</span></div><div class="focus-progress"><span>${phaseName[state.phase]} · 已完成 ${completed} / ${total}</span><progress max="${total}" value="${completed}" aria-label="本阶段完成词数"></progress></div><div class="actions">${button('上一词', 'previous-word', 'text', state.lastWordId ? '' : 'disabled')}${button('结束本组', 'end-study', 'text')}</div></header><div class="focus-layout"><article class="focus-word" aria-live="polite"><div class="word-tools"><span class="eyebrow">${h(label)}</span><div class="actions">${button(detail.starred ? '已收藏' : '收藏', 'toggle-star', 'text', `data-id="${item.wordId}" aria-pressed="${!!detail.starred}"`)}${button('笔记', 'edit-note', 'text', `data-id="${item.wordId}"`)}</div></div><div class="focus-prompt">${hiddenEnglish ? `<div class="recall-definition">${studyDefinitions(item.sources)}</div>` : `<h1>${h(item.english)}</h1><div class="pronunciation">${button('英音', 'pronounce', 'text', `data-id="${item.wordId}" data-accent="en-GB"`)}${button('美音', 'pronounce', 'text', `data-id="${item.wordId}" data-accent="en-US"`)}<span>设备语音</span></div>`}${!reveal && state.phase !== 'spell' ? `<div class="memory-dots" aria-label="本词已通过 ${track.step} / ${track.steps.length} 轮">${track.steps.map((step, index) => `<span class="${index < track.step ? 'filled' : ''}"></span>`).join('')}<small>${track.step} / ${track.steps.length} 轮</small></div>` : ''}</div>${options}${spelling}${reveal ? `<div class="answer-feedback ${state.pending.correct ? 'correct' : 'incorrect'}"><strong>${state.pending.correct ? '核对一下，是你想的答案吗？' : state.phase === 'spell' ? '看清拼写，稍后再试一次。' : '没关系，重新认识它。'}</strong>${state.pending.answer && !state.pending.correct ? `<p>你的答案：${h(state.pending.answer)}</p>` : ''}</div><div class="focus-answer">${studyDefinitions(item.sources)}</div>` : ''}</article><aside class="context-panel"><p class="eyebrow">${reveal ? 'IN YOUR CONTEXT' : 'TAKE YOUR TIME'}</p><h2>${reveal ? '让记忆，有个落点。' : '先回忆，再看答案。'}</h2>${reveal ? `${detail.example ? `<blockquote>${h(detail.example)}</blockquote><p>${h(detail.translation || '')}</p>${button('朗读例句', 'speak-example', 'text', `data-id="${item.wordId}"`)}` : '<p>把试卷中的原句存进来，下次就不只是记一个孤立的单词。</p>'}<div class="personal-note"><span>我的笔记</span><p>${h(detail.note || '还没有笔记。可以记词根、搭配，或你自己的联想。')}</p>${button('编辑语境与笔记', 'edit-note', 'text', `data-id="${item.wordId}"`)}</div>` : `<p>${state.phase === 'spell' ? '根据释义输入完整英文。短语中的空格也要记得。' : '不用猜自己是否看过它。试着说出意思，再判断是否真正想起来。'}</p><div class="quiet-rule"><span>本组 ${total} 个词</span><p>记错的词会隔开重现；新词通过四轮，再进行所选拼写。</p></div>`}</aside></div><footer class="focus-footer"><div class="focus-controls">${reveal ? `${correction ? button('记错了', 'study-correct', 'correction') : ''}${button(state.pending.correct ? '确认，继续' : '记一下，继续', 'study-continue', 'primary', '', 'arrow')}` : state.phase === 'choice' || state.phase === 'spell' ? button(state.phase === 'spell' ? '想不起来，看答案' : '不认识，看答案', 'study-unknown', 'text') : `${button('不认识', 'study-unknown', 'recognition no')}${button('模糊', 'study-vague', 'recognition unsure')}${button('认识', 'study-known', 'primary recognition')}`}</div><p class="keyboard-help">${keyboardHint} · 每一步自动保存</p></footer></section>`;
+  const review = track.initialStatus !== 'new';
+  const keyboardHint = reveal ? `空格 / Enter 下一词${correction ? ' · C 记错了' : ''}` : state.phase === 'choice' ? '数字 1—4 选择 · 空格 不认识' : state.phase === 'spell' ? 'Enter 检查拼写' : `1 不认识 · ${review ? '2 模糊 · ' : ''}3 认识`;
+  const options = state.phase === 'choice' && !reveal ? `<div class="meaning-choices">${track.options.map((option, index) => `<button data-action="answer-choice" data-index="${index}"><kbd>${index + 1}</kbd><span>${h(option)}</span></button>`).join('')}</div>${track.options.length < 4 ? '<p class="helper-note">可用释义不足四项，仅显示真实词库选项。</p>' : ''}` : '';
+  const spelling = state.phase === 'spell' && !reveal ? '<form id="spelling-form"><label for="spelling-answer">根据释义，拼写英文</label><div><input id="spelling-answer" name="answer" type="text" maxlength="300" autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false" placeholder="输入单词或短语" required><button type="submit" class="button primary">检查</button></div></form>' : '';
+  const meanings = [...new Set(item.sources.flatMap(source => source.meanings))];
+  const memory = state.phase !== 'spell' ? `<div class="memory-dots" aria-label="本词已通过 ${track.step} / ${track.steps.length} 轮">${track.steps.map((step, index) => `<span class="${index < track.step ? 'filled' : ''}"></span>`).join('')}<small>${track.step} / ${track.steps.length}</small></div>` : '';
+  const panel = practicePanel === 'context'
+    ? `${detail.example ? `<blockquote>${h(detail.example)}</blockquote><p>${h(detail.translation || '')}</p>${button('朗读例句', 'speak-example', 'text', `data-id="${item.wordId}"`, 'play')}` : '<p class="panel-empty">还没有原句。添加你读过的语境，让单词和句子一起留下。</p>'}${button(detail.example ? '编辑原句' : '添加原句', 'edit-note', 'text', `data-id="${item.wordId}"`)}`
+    : practicePanel === 'note'
+      ? `<p class="saved-note">${h(detail.note || '记录词根、搭配或自己的联想。')}</p>${button('编辑笔记', 'edit-note', 'text', `data-id="${item.wordId}"`)}`
+      : item.sources.map(source => `<div class="source-detail"><span>${h(source.label)}</span><p>${source.meanings.map(h).join('；')}</p></div>`).join('');
+  main.innerHTML = `<section class="focus-shell">
+    <header class="focus-header">
+      <div class="actions">${button('返回', 'pause-study', 'text', '', 'back')}<span class="focus-brand">Afterword</span></div>
+      <div class="focus-progress"><span>${phaseName[state.phase]} <b>${completed}</b> / ${total}</span><progress max="${total}" value="${completed}" aria-label="本阶段完成词数"></progress></div>
+      <div class="actions">${button('上一词', 'previous-word', 'text', state.lastWordId ? '' : 'disabled')}<details class="focus-menu"><summary aria-label="学习菜单">•••</summary><div>${button('结束本组', 'end-study', 'text')}</div></details></div>
+    </header>
+    <div class="focus-layout"><article class="focus-word">
+      <div class="word-tools"><span class="eyebrow">${state.phase === 'spell' ? '拼写巩固' : review ? '复习单词' : '学习单词'}</span><div class="actions">${button(detail.starred ? '已收藏' : '收藏', 'toggle-star', 'text', `data-id="${item.wordId}" aria-pressed="${!!detail.starred}"`, 'bookmark')}${button('笔记', 'edit-note', 'text', `data-id="${item.wordId}"`, 'pen')}</div></div>
+      <div class="focus-prompt">${hiddenEnglish ? `<div class="recall-definition">${meanings.map(meaning => `<p>${h(meaning)}</p>`).join('')}</div>` : `<h1>${h(item.english)}</h1><div class="pronunciation">${button('英音', 'pronounce', 'text', `data-id="${item.wordId}" data-accent="en-GB"`, 'play')}${button('美音', 'pronounce', 'text', `data-id="${item.wordId}" data-accent="en-US"`, 'play')}<span>设备语音</span></div>`}${memory}</div>
+      ${options}${spelling}
+      ${reveal ? `<div class="focus-answer">${meanings.map(meaning => `<button class="meaning-link" data-action="practice-panel" data-panel="context" aria-label="查看语境：${h(meaning)}">${h(meaning)}${icon('arrow')}</button>`).join('')}</div>
+        <div class="answer-feedback ${state.pending.correct ? 'correct' : 'incorrect'}" role="status">${state.pending.correct ? state.phase === 'spell' ? '拼写正确' : '核对词义，记错了可以纠正' : state.phase === 'spell' ? '记住这个拼写，稍后再试' : '重新记忆，稍后再见'}${state.pending.answer && !state.pending.correct ? `<p>你的答案：${h(state.pending.answer)}</p>` : ''}</div>
+        <section class="word-notebook" aria-label="词条资料"><div class="notebook-content" id="practice-content">${panel}</div><div class="notebook-tabs" role="group" aria-label="词条资料分类">${[['context', '语境'], ['note', '笔记'], ['sources', '来源']].map(([value, label]) => button(label, 'practice-panel', `text ${practicePanel === value ? 'selected' : ''}`, `data-panel="${value}" aria-pressed="${practicePanel === value}" aria-controls="practice-content"`)).join('')}</div></section>` : state.phase === 'recall' || state.phase === 'reverse' ? '<p class="recall-whisper">先在心里回忆，再判断是否认识</p>' : ''}
+    </article></div>
+    <footer class="focus-footer"><div class="focus-controls">${reveal ? `${correction ? button('记错了', 'study-correct', 'correction') : ''}${button('下一词', 'study-continue', 'primary', '', 'arrow')}` : state.phase === 'choice' || state.phase === 'spell' ? button(state.phase === 'spell' ? '想不起来' : '不认识', 'study-unknown', 'text') : `${button('不认识', 'study-unknown', 'recognition no')}${review ? button('模糊', 'study-vague', 'recognition unsure') : ''}${button('认识', 'study-known', 'primary recognition')}`}</div><p class="keyboard-help">${keyboardHint} · 已自动保存</p></footer>
+  </section>`;
 }
+
 function renderSettings() {
   const preferences = data.preferences;
-  main.innerHTML = `${heading('偏好与备份', '把节奏调到适合自己。')}<form id="preferences-form" class="preferences-form"><div class="form-grid"><div class="field"><label for="daily-goal">每日目标（词）</label><input id="daily-goal" name="dailyGoal" type="number" min="1" max="200" value="${preferences.dailyGoal}" required></div><div class="field"><label for="group-size">默认每组数量</label><input id="group-size" name="groupSize" type="number" min="1" max="50" value="${preferences.groupSize}" required></div><div class="field"><label for="accent">默认发音</label><select id="accent" name="accent"><option value="en-GB" ${preferences.accent === 'en-GB' ? 'selected' : ''}>英音 · 设备语音</option><option value="en-US" ${preferences.accent === 'en-US' ? 'selected' : ''}>美音 · 设备语音</option></select></div><div class="field"><label for="theme">专注背景</label><select id="theme" name="theme"><option value="sky" ${preferences.theme === 'sky' ? 'selected' : ''}>晴空</option><option value="paper" ${preferences.theme === 'paper' ? 'selected' : ''}>纸白</option></select></div></div><label class="check-field"><input type="checkbox" name="learnSpelling" ${preferences.learnSpelling ? 'checked' : ''}> 学新词后练习拼写</label><label class="check-field"><input type="checkbox" name="reviewSpelling" ${preferences.reviewSpelling ? 'checked' : ''}> 复习后练习拼写</label><p class="helper-note">偏好用于下一组；不会改变进行中的学习。设备没有对应口音时会明确提示，不伪装成真人原声。</p><button type="submit" class="button primary">保存学习偏好</button></form>
+  main.innerHTML = `${heading('偏好与备份', '把节奏调到适合自己。')}<form id="preferences-form" class="preferences-form"><div class="form-grid"><div class="field"><label for="daily-goal">每日目标（词）</label><input id="daily-goal" name="dailyGoal" type="number" min="1" max="200" value="${preferences.dailyGoal}" required></div><div class="field"><label for="group-size">默认每组数量</label><input id="group-size" name="groupSize" type="number" min="1" max="100" value="${preferences.groupSize}" required></div><div class="field"><label for="accent">默认发音</label><select id="accent" name="accent"><option value="en-GB" ${preferences.accent === 'en-GB' ? 'selected' : ''}>英音 · 设备语音</option><option value="en-US" ${preferences.accent === 'en-US' ? 'selected' : ''}>美音 · 设备语音</option></select></div><div class="field"><label for="theme">专注背景</label><select id="theme" name="theme"><option value="sky" ${preferences.theme === 'sky' ? 'selected' : ''}>晴空</option><option value="paper" ${preferences.theme === 'paper' ? 'selected' : ''}>纸白</option></select></div></div><label class="check-field"><input type="checkbox" name="learnSpelling" ${preferences.learnSpelling ? 'checked' : ''}> 学新词后练习拼写</label><label class="check-field"><input type="checkbox" name="reviewSpelling" ${preferences.reviewSpelling ? 'checked' : ''}> 复习后练习拼写</label><p class="helper-note">偏好用于下一组；不会改变进行中的学习。设备没有对应口音时会明确提示，不伪装成真人原声。</p><button type="submit" class="button primary">保存学习偏好</button></form>
     <div class="settings-list"><section class="settings-row"><div><h2>下载备份</h2><p>保存所有试卷、词条和复习进度。</p></div><a class="button primary" href="/api/backup" download>${icon('download')} 下载备份</a></section>
     <section class="settings-row"><div><h2>恢复备份</h2><p>选择 JSON 备份文件，检查内容后确认恢复。<br>恢复会替换当前词库，原数据会自动备份。</p></div><div class="file-control"><label class="button" for="backup-file">选择备份文件</label><input class="visually-hidden" id="backup-file" type="file" accept=".json,application/json"></div></section></div>
     <section class="model-settings"><div class="section-heading"><h2>大模型接口</h2><span class="model-state">${modelStatus.ready ? '已配置' : modelStatus.state === 'disabled' ? '未启用' : '待配置'}</span></div><p class="subtext">${h(modelStatus.message)}</p>${modelStatus.ready ? `<p class="helper-note">服务：${h(modelStatus.serviceOrigin)} · 模型：${h(modelStatus.model)}</p>` : ''}<details class="format-help"><summary>以后如何接入？</summary><p>将项目中的 .env.example 复制为 .env，填写服务地址、模型名和密钥，将 LLM_ENABLED 设为 true，然后重启服务。密钥只保存在服务端。</p><p>支持 Chat Completions 兼容接口。启用后，在“录入词条”展开“用大模型整理原文”。</p></details></section>
@@ -230,14 +256,14 @@ function newPaperDialog(context = '') {
 }
 function studyForm(paperId = '', inDialog = false, requestedFilter = null) {
   const selected = requestedFilter || (['new', 'unfamiliar', 'due'].includes(filter) ? filter : filterWords(data.words, { paperId, filter: 'due' }).length ? 'due' : filterWords(data.words, { paperId, filter: 'new' }).length ? 'new' : 'all');
-  return `<form id="study-form"><div class="field"><label for="study-paper">学习范围</label><select name="paperId" id="study-paper"><option value="">全部试卷</option>${data.papers.map(p => `<option value="${p.id}" ${paperId === p.id ? 'selected' : ''}>${h(p.label)}（${p.count} 个）</option>`).join('')}</select></div><div class="form-grid"><div class="field"><label for="study-filter">词条状态</label><select name="filter" id="study-filter">${[['due', '到期复习'], ['new', '未学习'], ['unfamiliar', '不熟悉'], ['all', '全部词条（自由复习）']].map(([value, label]) => `<option value="${value}" ${selected === value ? 'selected' : ''}>${label}</option>`).join('')}</select></div><div class="field"><label for="study-size">每组数量</label><input type="number" name="size" id="study-size" min="1" max="50" value="${data.preferences.groupSize}" required></div></div><div class="field"><label for="study-practice">练习方式</label><select id="study-practice" name="practice"><option value="mixed">分轮记忆 + 可选拼写</option><option value="spelling">只练拼写</option></select></div><label class="check-field"><input type="checkbox" name="spelling" ${data.preferences[selected === 'new' ? 'learnSpelling' : 'reviewSpelling'] ? 'checked' : ''}> 记忆完成后练习拼写</label><p class="helper-note" id="study-availability" role="status"></p><details class="format-help"><summary>记忆与复习怎样进行？</summary><p>新词：选义 → 两次英中回忆 → 中英回忆，共四轮。已掌握词：先判断认识、模糊或不认识。答错后四轮重学；认识后先核对，可用「记错了」纠正。组后按设置练习拼写。</p><p>通过后按 1、3、7、14、30、60 天安排复习。提前练习不延长间隔。这是可解释的本地规则，不是不背单词的专有算法。</p></details><div class="${inDialog ? 'modal-actions' : 'setup-actions'}">${inDialog ? button('取消', 'close-modal') : ''}<button type="submit" class="button primary">开始学习 ${icon('arrow')}</button></div></form>`;
+  return `<form id="study-form"><div class="field"><label for="study-paper">学习范围</label><select name="paperId" id="study-paper"><option value="">全部试卷</option>${data.papers.map(p => `<option value="${p.id}" ${paperId === p.id ? 'selected' : ''}>${h(p.label)}（${p.count} 个）</option>`).join('')}</select></div><div class="form-grid"><div class="field"><label for="study-filter">词条状态</label><select name="filter" id="study-filter">${[['due', '到期复习'], ['new', '未学习'], ['unfamiliar', '不熟悉'], ['all', '全部词条（自由复习）']].map(([value, label]) => `<option value="${value}" ${selected === value ? 'selected' : ''}>${label}</option>`).join('')}</select></div><div class="field"><label for="study-size">每组数量</label><input type="number" name="size" id="study-size" min="1" max="100" value="${data.preferences.groupSize}" required></div></div><div class="field"><label for="study-practice">练习方式</label><select id="study-practice" name="practice"><option value="mixed">分轮记忆 + 可选拼写</option><option value="spelling">只练拼写</option></select></div><label class="check-field"><input type="checkbox" name="spelling" ${data.preferences[selected === 'new' ? 'learnSpelling' : 'reviewSpelling'] ? 'checked' : ''}> 记忆完成后练习拼写</label><p class="helper-note" id="study-availability" role="status"></p><details class="format-help"><summary>记忆与复习怎样进行？</summary><p>新词：选义 → 三次词义回忆，共四轮。已掌握词：先判断认识、模糊或不认识。答错后四轮重学；认识后先核对，可用「记错了」纠正。组后按设置练习拼写。</p><p>通过后按 1、3、7、14、30、60 天安排复习。提前练习不延长间隔。这是可解释的本地规则，不是不背单词的专有算法。</p></details><div class="${inDialog ? 'modal-actions' : 'setup-actions'}">${inDialog ? button('取消', 'close-modal') : ''}<button type="submit" class="button primary">开始学习 ${icon('arrow')}</button></div></form>`;
 }
 function updateStudyAvailability() {
   const form = modal.open ? $('#study-form', modal) : $('#study-form', main);
   if (!form) return;
   const count = filterWords(data.words, { paperId: form.elements.paperId.value, filter: form.elements.filter.value }).length;
   const size = Number(form.elements.size.value);
-  const validSize = Number.isInteger(size) && size >= 1 && size <= 50;
+  const validSize = Number.isInteger(size) && size >= 1 && size <= 100;
   $('#study-availability', form).textContent = !count ? '当前范围没有符合条件的词条，请切换状态或试卷。' : !validSize ? '每组数量须为 1—50。' : `符合条件 ${count} 个，本组将学习 ${Math.min(count, size)} 个。`;
   $('button[type="submit"]', form).disabled = !count || !validSize;
   form.elements.spelling.disabled = form.elements.practice.value === 'spelling';
@@ -281,6 +307,7 @@ function editDialog(id) {
 function confirmDialog(title, message, action, extra = '') { showModal(title, `<p class="modal-description">${h(message)}</p><div class="modal-actions">${button('取消', 'close-modal')}${button('确认', action, 'danger', extra)}</div>`); }
 async function studyAction(action, answer) {
   const s = data.session;
+  if (action === 'continue') practicePanel = 'context';
   data.session = await api('/session/action', { sessionId: s.id, revision: s.revision, action, answer });
   if (data.session.phase === 'done' || ['remember', 'forget', 'continue'].includes(action)) await refresh();
   render();
@@ -334,12 +361,19 @@ async function handleAction(element) {
     if (item) showModal('上一词 · 回看', `<h3 class="detail-english">${h(item.english)}</h3>${studyDefinitions(item.sources)}<p class="helper-note">仅回看，不更改刚才的作答记录。当前词的进度保持不变。</p>`);
     return;
   }
+  if (action === 'practice-panel') {
+    if (!['context', 'note', 'sources'].includes(element.dataset.panel) || !data.session?.pending) return;
+    practicePanel = element.dataset.panel;
+    renderPractice(data.session);
+    $(`.notebook-tabs [data-panel="${practicePanel}"]`)?.focus({ preventScroll: true });
+    return;
+  }
   if (action === 'answer-choice') {
     const state = data.session, track = state.tracks.find(track => track.wordId === state.queue[0]);
     return studyAction('choose', track.options[Number(element.dataset.index)]);
   }
   if (action === 'retry-failed') {
-    data.session = await api('/session', { mode: 'context', filter: 'all', size: 50, retrySessionId: data.session.id });
+    data.session = await api('/session', { mode: 'context', filter: 'all', size: 100, retrySessionId: data.session.id });
     return render();
   }
   if (action === 'edit-entry') return editDialog(element.dataset.id);
@@ -499,7 +533,10 @@ document.addEventListener('keydown', event => {
       const answer = track.options[Number(event.key) - 1];
       if (answer) { event.preventDefault(); run(() => studyAction('choose', answer)); return; }
       if (event.code === 'Space') action = 'unknown';
-    } else if (['recall', 'reverse'].includes(s.phase)) action = { 1: 'unknown', 2: 'vague', 3: 'known' }[event.key];
+    } else if (['recall', 'reverse'].includes(s.phase)) {
+      const track = s.tracks.find(track => track.wordId === s.queue[0]);
+      action = { 1: 'unknown', 2: track.initialStatus === 'new' ? undefined : 'vague', 3: 'known' }[event.key];
+    }
     if (action) { event.preventDefault(); run(() => studyAction(action)); }
     return;
   }

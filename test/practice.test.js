@@ -37,10 +37,11 @@ function finish(store) {
   while (store.session().phase !== 'done') { assert.ok(limit-- > 0); correctAnswer(store); store.validateBackup(store.backup()); }
 }
 
-test('new words pass choice, two recall rounds, reverse recall and spelling before scheduling', context => {
+test('new words pass choice and three meaning recall rounds before spelling and scheduling', context => {
   const { store } = fixture(context, 'remember = 记住');
   store.startSession({ mode: 'context', filter: 'new', size: 1 });
-  for (const phase of ['choice', 'recall', 'recall', 'reverse']) {
+  assert.equal(store.session().protocolVersion, 2);
+  for (const phase of ['choice', 'recall', 'recall', 'recall']) {
     assert.equal(store.session().phase, phase);
     correctAnswer(store);
     assert.equal(store.session().revealed, true);
@@ -70,7 +71,7 @@ test('known is provisional, correction marks unfamiliar immediately and repeats 
   assert.equal(store.get('SELECT review_streak FROM words WHERE id = ?', wordId).review_streak, 0);
   act(store, 'continue');
   assert.equal(store.session().queue.indexOf(wordId), 3);
-  assert.deepEqual(store.session().tracks.find(track => track.wordId === wordId).steps, ['choice', 'recall', 'recall', 'reverse']);
+  assert.deepEqual(store.session().tracks.find(track => track.wordId === wordId).steps, ['choice', 'recall', 'recall', 'recall']);
   finish(store);
   assert.equal(store.get('SELECT review_streak FROM words WHERE id = ?', wordId).review_streak, 1);
   assert.equal(store.overview().stats.today.reviewed, 4);
@@ -87,6 +88,57 @@ test('forgetting after a partial round resets all recall progress; single word r
   finish(store);
   assert.equal(store.session().failed.length, 1);
   assert.equal(store.session().passedZh.length, 1);
+});
+
+test('previous unversioned sessions keep their reverse round through restore, failure and completion', context => {
+  const { store } = fixture(context, 'remember = 记住');
+  store.startSession({ mode: 'context', spelling: false });
+  const backup = store.backup();
+  delete backup.session.protocolVersion;
+  backup.session.tracks[0].steps = ['choice', 'recall', 'recall', 'reverse'];
+  backup.session.tracks[0].step = 3;
+  backup.session.phase = 'reverse';
+  store.restore(backup);
+  act(store, 'known');
+  store.restore(store.backup());
+  act(store, 'correct'); act(store, 'continue');
+  assert.deepEqual(store.session().tracks[0].steps, ['choice', 'recall', 'recall', 'reverse']);
+  finish(store);
+  assert.equal(store.overview().stats.today.learned, 1);
+  const next = store.startSession({ mode: 'context' });
+  assert.equal(next.protocolVersion, 2);
+  act(store, 'unknown'); act(store, 'continue');
+  assert.deepEqual(store.session().tracks[0].steps, ['choice', 'recall', 'recall', 'recall']);
+});
+
+test('unknown practice protocols and mismatched step sequences cannot replace progress', context => {
+  const { store } = fixture(context);
+  store.startSession({ mode: 'context' });
+  const original = store.backup();
+  for (const version of [null, 1, 3, '2']) {
+    const backup = structuredClone(original);
+    backup.session.protocolVersion = version;
+    assert.throws(() => store.restore(backup), /分轮学习/);
+  }
+  const mismatch = structuredClone(original);
+  mismatch.session.tracks[0].steps[3] = 'reverse';
+  assert.throws(() => store.restore(mismatch), /分轮学习/);
+  assert.deepEqual(store.session(), original.session);
+});
+
+test('100-word groups and preferences round-trip while out-of-range sizes are rejected', context => {
+  const words = Array.from({ length: 100 }, (_, index) => `word ${index} = 释义 ${index}`).join('\n');
+  const { store } = fixture(context, words);
+  store.setPreferences({ groupSize: 100 });
+  assert.throws(() => store.setPreferences({ groupSize: 101 }));
+  assert.throws(() => store.startSession({ mode: 'context', size: 101 }));
+  const state = store.startSession({ mode: 'context', size: 100, spelling: false });
+  assert.equal(state.items.length, 100);
+  correctAnswer(store);
+  const backup = store.backup();
+  store.restore(backup);
+  assert.equal(store.preferences().groupSize, 100);
+  assert.deepEqual(store.session(), backup.session);
 });
 
 test('spelling checks normalized full phrases and keeps wrong or revealed answers in the queue', context => {
