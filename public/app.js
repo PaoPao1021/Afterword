@@ -172,7 +172,7 @@ function renderStudy() {
   const s = data.session;
   if (s?.mode === 'context') return renderPractice(s);
   if (!s) {
-    main.innerHTML = `${heading('开始一段专注时间', '选义初识 → 分轮回忆 → 反向回忆 → 拼写巩固')}${reviewSummary()}${data.words.length ? `<section class="review-setup" aria-label="复习设置">${studyForm()}</section>` : `<div class="empty-panel"><h3>还没有可复习的词条</h3><p>先选一套试卷，录入需要复习的单词和短语。</p>${button('录入词条', 'import', 'primary')}</div>`}`;
+    main.innerHTML = `${heading('开始一段专注时间', '选义初识 → 三轮词义回忆 → 可选拼写巩固')}${reviewSummary()}${data.words.length ? `<section class="review-setup" aria-label="复习设置">${studyForm()}</section>` : `<div class="empty-panel"><h3>还没有可复习的词条</h3><p>先选一套试卷，录入需要复习的单词和短语。</p>${button('录入词条', 'import', 'primary')}</div>`}`;
     return;
   }
   if (s.phase === 'done') {

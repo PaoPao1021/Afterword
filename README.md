@@ -120,12 +120,13 @@ in the long run = 从长远来看
 | --- | --- |
 | `LLM_ENABLED` | `false`；仅 `true` 启用 |
 | `LLM_PROVIDER` | `openai-compatible`，当前支持的适配器 |
-| `LLM_BASE_URL` | 留空；API 根地址，包含服务商要求的版本路径，例如 `https://api.example.com/v1`，自动追加 `/chat/completions` |
+| `LLM_BASE_URL` | 留空；API 根地址，包含服务商要求的版本路径，例如 `https://api.example.com/v1`；也接受完整 `/chat/completions` 地址，不会重复追加 |
 | `LLM_MODEL` | 留空；服务商提供的文本对话模型标识 |
 | `LLM_API_KEY` | 留空；仅服务端读取，不发给浏览器、不写入词库和备份 |
 | `LLM_TIMEOUT_MS` | `45000`；可设置 1000—120000 毫秒 |
+| `LLM_TOKEN_PARAMETER` | `max_completion_tokens`；若兼容服务使用旧字段，设为 `max_tokens`。两者仅发送所选的一项，固定上限 4096 |
 
-适配器采用 [Chat Completions 请求格式](https://developers.openai.com/api/reference/resources/chat/subresources/completions/methods/create)：`model`、`messages`、`stream: false`、`max_completion_tokens: 4096`，从 `choices[0].message.content` 读取结果。所选兼容服务需支持这些字段；不支持该协议的供应商应增加适配器，不要只替换地址。无需安装 SDK，没有绑定具体模型或服务商。
+适配器采用 [Chat Completions 请求格式](https://developers.openai.com/api/reference/resources/chat/subresources/completions/methods/create)：`model`、`messages`、`stream: false`，从 `choices[0].message.content` 读取结果。输出长度默认用 `max_completion_tokens: 4096`，可通过配置切换到 `max_tokens`（例如 [DeepSeek 文档](https://api-docs.deepseek.com/api/create-chat-completion/) 使用此字段）。不自动重试或猜测服务商，避免重复调用和费用。所选兼容服务需支持这些字段；不支持该协议的供应商应增加适配器，不要只替换地址。无需安装 SDK，没有绑定具体模型或服务商。
 
 远程服务需使用 HTTPS，本机模型服务允许 `http://localhost`、`http://127.0.0.1` 或 `http://[::1]`。根地址不接受用户名、密码、查询参数和片段；请求不跟随重定向。`.env` 已加入忽略规则，静态服务不会提供配置文件。
 

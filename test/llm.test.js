@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
 import { createLlmService, MAX_SOURCE_LENGTH } from '../lib/llm.js';
 import { createApp } from '../server.js';
+import { createServer } from 'node:http';
 
 const configured = { LLM_ENABLED: 'true', LLM_BASE_URL: 'https://model.example/v1/', LLM_MODEL: 'test-model', LLM_API_KEY: 'test-secret-never-expose' };
 const words = [{ english: 'in the long run', meaning: '从长远来看' }];
@@ -24,6 +25,7 @@ test('incomplete or invalid configuration blocks only the model feature', async 
     [{ ...configured, LLM_BASE_URL: 'https://model.example/v1?key=secret' }, 'invalid'],
     [{ ...configured, LLM_BASE_URL: 'https://user:secret@model.example/v1' }, 'invalid'],
     [{ ...configured, LLM_TIMEOUT_MS: '0' }, 'invalid'],
+    [{ ...configured, LLM_TOKEN_PARAMETER: 'unknown' }, 'invalid'],
   ]) {
     const llm = createLlmService({ env, fetchImpl: () => assert.fail('must not connect') });
     assert.equal(llm.status().state, state);
@@ -51,6 +53,46 @@ test('adapter sends a compatible request and returns validated unsaved rows', as
 test('invalid input is rejected before calling the provider', async () => {
   const llm = createLlmService({ env: configured, fetchImpl: () => assert.fail('must not connect') });
   for (const text of ['', '  ', null, {}, 'x'.repeat(MAX_SOURCE_LENGTH + 1)]) await assert.rejects(llm.extract(text), { status: 400 });
+});
+
+test('full endpoints and token parameter dialects work without duplicate suffixes or automatic retries', async () => {
+  for (const tokenParameter of ['max_tokens', 'max_completion_tokens']) {
+    for (const baseUrl of ['https://model.example/v1', 'https://model.example/v1/chat/completions/']) {
+      let calls = 0;
+      const llm = createLlmService({
+        env: { ...configured, LLM_BASE_URL: baseUrl, LLM_TOKEN_PARAMETER: tokenParameter },
+        fetchImpl: async (url, options) => {
+          calls++;
+          assert.equal(url, 'https://model.example/v1/chat/completions');
+          const body = JSON.parse(options.body);
+          assert.equal(body[tokenParameter], 4096);
+          assert.equal(Object.hasOwn(body, tokenParameter === 'max_tokens' ? 'max_completion_tokens' : 'max_tokens'), false);
+          return new Response('unsupported parameter with secret', { status: 400 });
+        },
+      });
+      await assert.rejects(llm.extract('Example'), { status: 502 });
+      assert.equal(calls, 1);
+    }
+  }
+});
+
+test('real fetch connects to a local compatible server and reads UTF-8 output', async context => {
+  let received;
+  const server = createServer(async (request, response) => {
+    const chunks = [];
+    for await (const chunk of request) chunks.push(chunk);
+    received = { url: request.url, authorization: request.headers.authorization, body: JSON.parse(Buffer.concat(chunks).toString('utf8')) };
+    response.writeHead(200, { 'Content-Type': 'application/json' });
+    response.end(JSON.stringify({ choices: [{ message: { content: JSON.stringify({ words }) }, finish_reason: 'stop' }] }));
+  });
+  await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
+  context.after(() => new Promise(resolve => server.close(resolve)));
+  const llm = createLlmService({ env: { ...configured, LLM_BASE_URL: `http://127.0.0.1:${server.address().port}/v1/chat/completions`, LLM_TOKEN_PARAMETER: 'max_tokens' } });
+  assert.deepEqual(await llm.extract('In the long run, things improve.'), words);
+  assert.equal(received.url, '/v1/chat/completions');
+  assert.equal(received.authorization, `Bearer ${configured.LLM_API_KEY}`);
+  assert.equal(received.body.max_tokens, 4096);
+  assert.equal(Object.hasOwn(received.body, 'max_completion_tokens'), false);
 });
 
 test('adapter accepts future article context without adding titles to model instructions', async () => {
