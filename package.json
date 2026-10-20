@@ -1,0 +1,13 @@
+{
+  "name": "afterword",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "engines": { "node": ">=22.13.0" },
+  "scripts": {
+    "start": "node server.js",
+    "dev": "node --watch server.js",
+    "test": "node --test",
+    "check": "node --check server.js && node --check lib/store.js && node --check lib/parser.js && node --check lib/llm.js && node --check lib/sources.js && node --check lib/errors.js && node --check lib/review.js && node --check lib/word-list.js && node --check lib/practice.js && node --check lib/learning.js && node --check public/app.js"
+  }
+}
