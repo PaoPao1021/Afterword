@@ -7,7 +7,9 @@
   "scripts": {
     "start": "node server.js",
     "dev": "node --watch server.js",
+    "password:hash": "node scripts/password-hash.js",
+    "backup": "node scripts/backup.js",
     "test": "node --test",
-    "check": "node --check server.js && node --check lib/store.js && node --check lib/parser.js && node --check lib/llm.js && node --check lib/sources.js && node --check lib/errors.js && node --check lib/review.js && node --check lib/word-list.js && node --check lib/practice.js && node --check lib/learning.js && node --check public/app.js"
+    "check": "node --check server.js && node --check lib/store.js && node --check lib/parser.js && node --check lib/llm.js && node --check lib/sources.js && node --check lib/errors.js && node --check lib/review.js && node --check lib/word-list.js && node --check lib/practice.js && node --check lib/learning.js && node --check lib/access.js && node --check lib/backup.js && node --check scripts/backup.js && node --check scripts/password-hash.js && node --check public/app.js"
   }
 }

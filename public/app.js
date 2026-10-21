@@ -33,8 +33,23 @@ let practicePanel = 'context';
 let modelStatus = { ready: false, state: 'disabled', message: '接口已预留，暂未启用。', maxSourceLength: 20000 };
 
 async function api(path, body, method = 'POST') {
-  const response = await fetch(`/api${path}`, body === undefined ? { method: 'GET' } : { method, headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
-  const result = await response.json();
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 140000);
+  let response, result;
+  try {
+    response = await fetch(`/api${path}`, { ...(body === undefined ? { method: 'GET' } : { method, headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) }), signal: controller.signal });
+    if (response.status === 401 && !$('#auth-notice')) {
+      const notice = document.createElement('div');
+      notice.id = 'auth-notice'; notice.setAttribute('role', 'alert');
+      notice.innerHTML = '登录已过期，当前输入仍保留。<a href="/login" target="_blank" rel="noopener">在新页面重新登录</a>后回来重试。';
+      document.body.append(notice);
+    }
+    try { result = await response.json(); } catch { throw new Error(`服务返回异常（HTTP ${response.status}），请保留当前输入，稍后重试`); }
+  } catch (error) {
+    if (error.name === 'AbortError' || error instanceof TypeError) throw new Error('连接中断或超时，未自动重试；保存结果可能已生效，请重新连接后核对');
+    throw error;
+  } finally { clearTimeout(timeout); }
+  if (response.ok && path === '/overview') $('#auth-notice')?.remove();
   if (!response.ok) { const error = new Error(result.error || '操作失败，请重试'); error.status = response.status; throw error; }
   return result;
 }
@@ -233,7 +248,7 @@ function renderSettings() {
   main.innerHTML = `${heading('偏好与备份', '把节奏调到适合自己。')}<form id="preferences-form" class="preferences-form"><div class="form-grid"><div class="field"><label for="daily-goal">每日目标（词）</label><input id="daily-goal" name="dailyGoal" type="number" min="1" max="200" value="${preferences.dailyGoal}" required></div><div class="field"><label for="group-size">默认每组数量</label><input id="group-size" name="groupSize" type="number" min="1" max="100" value="${preferences.groupSize}" required></div><div class="field"><label for="accent">默认发音</label><select id="accent" name="accent"><option value="en-GB" ${preferences.accent === 'en-GB' ? 'selected' : ''}>英音 · 设备语音</option><option value="en-US" ${preferences.accent === 'en-US' ? 'selected' : ''}>美音 · 设备语音</option></select></div><div class="field"><label for="theme">专注背景</label><select id="theme" name="theme"><option value="sky" ${preferences.theme === 'sky' ? 'selected' : ''}>晴空</option><option value="paper" ${preferences.theme === 'paper' ? 'selected' : ''}>纸白</option></select></div></div><label class="check-field"><input type="checkbox" name="learnSpelling" ${preferences.learnSpelling ? 'checked' : ''}> 学新词后练习拼写</label><label class="check-field"><input type="checkbox" name="reviewSpelling" ${preferences.reviewSpelling ? 'checked' : ''}> 复习后练习拼写</label><p class="helper-note">偏好用于下一组；不会改变进行中的学习。设备没有对应口音时会明确提示，不伪装成真人原声。</p><button type="submit" class="button primary">保存学习偏好</button></form>
     <div class="settings-list"><section class="settings-row"><div><h2>下载备份</h2><p>保存所有试卷、词条和复习进度。</p></div><a class="button primary" href="/api/backup" download>${icon('download')} 下载备份</a></section>
     <section class="settings-row"><div><h2>恢复备份</h2><p>选择 JSON 备份文件，检查内容后确认恢复。<br>恢复会替换当前词库，原数据会自动备份。</p></div><div class="file-control"><label class="button" for="backup-file">选择备份文件</label><input class="visually-hidden" id="backup-file" type="file" accept=".json,application/json"></div></section></div>
-    <section class="model-settings"><div class="section-heading"><h2>大模型接口</h2><span class="model-state">${modelStatus.ready ? '已配置' : modelStatus.state === 'disabled' ? '未启用' : '待配置'}</span></div><p class="subtext">${h(modelStatus.message)}</p>${modelStatus.ready ? `<p class="helper-note">服务：${h(modelStatus.serviceOrigin)} · 模型：${h(modelStatus.model)}</p>` : ''}<details class="format-help"><summary>以后如何接入？</summary><p>将项目中的 .env.example 复制为 .env，填写服务地址、模型名和密钥，将 LLM_ENABLED 设为 true，然后重启服务。密钥只保存在服务端。</p><p>支持 Chat Completions 兼容接口。启用后，在“录入词条”展开“用大模型整理原文”。</p></details></section>
+    ${data.access?.enabled ? `<section class="settings-row"><div><h2>私人访问</h2><p>仅限本人使用。共用电脑上使用完毕后请退出。</p></div>${button('退出登录', 'logout')}</section>` : ''}<section class="model-settings"><div class="section-heading"><h2>大模型接口</h2><span class="model-state">${modelStatus.ready ? '已配置' : modelStatus.state === 'disabled' ? '未启用' : '待配置'}</span></div><p class="subtext">${h(modelStatus.message)}</p>${modelStatus.ready ? `<p class="helper-note">服务：${h(modelStatus.serviceOrigin)} · 模型：${h(modelStatus.model)}</p>` : ''}<details class="format-help"><summary>以后如何接入？</summary><p>将项目中的 .env.example 复制为 .env，填写服务地址、模型名和密钥，将 LLM_ENABLED 设为 true，然后重启服务。密钥只保存在服务端。</p><p>支持 Chat Completions 兼容接口。启用后，在“录入词条”展开“用大模型整理原文”。</p></details></section>
     <details class="storage-details"><summary>数据保存在哪里？</summary><p>词库保存在本机，清理浏览器缓存不会删除词库。建议定期下载备份并另存一份。</p><dl><dt>词库文件</dt><dd class="storage-path">data/cet6.sqlite</dd><dt>恢复前的自动备份</dt><dd class="storage-path">data/backups/</dd></dl></details>`;
 }
 function studyDefinitions(sources) {
@@ -326,6 +341,10 @@ function importPrompt() {
 }
 async function handleAction(element) {
   const action = element.dataset.action;
+  if (action === 'logout') {
+    if (draft?.text && !window.confirm('退出将关闭当前页面，未保存的录入内容会丢失。确认退出？')) return;
+    await api('/logout', {}); location.assign('/login'); return;
+  }
   if (action === 'close-modal') return closeModal();
   if (action === 'new-paper') return newPaperDialog(element.dataset.context || '');
   if (action === 'import') return go(`/import${element.dataset.paper ? `?paper=${element.dataset.paper}` : ''}`);

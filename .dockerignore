@@ -1,0 +1,9 @@
+*
+!package.json
+!server.js
+!lib/
+!lib/**
+!public/
+!public/**
+!scripts/
+!scripts/**
