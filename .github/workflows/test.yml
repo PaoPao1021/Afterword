@@ -24,6 +24,6 @@ jobs:
           HASH="$(node --input-type=module -e "import {passwordHash} from './lib/access.js'; console.log(await passwordHash('ci-only-password-not-for-use'))")"
           docker run -d --name afterword-ci --read-only --tmpfs /tmp --cap-drop ALL --security-opt no-new-privileges:true -p 127.0.0.1:3210:3210 -e AFTERWORD_PUBLIC_ORIGIN=https://words.example -e AFTERWORD_PASSWORD_HASH="$HASH" -v afterword-ci-data:/app/data afterword-ci
           trap 'docker logs afterword-ci; docker rm -f afterword-ci; docker volume rm afterword-ci-data' EXIT
-          curl --retry 10 --retry-connrefused --retry-delay 1 --fail -H 'Host: words.example' http://127.0.0.1:3210/healthz
+          curl --retry 10 --retry-all-errors --retry-delay 1 --max-time 5 --fail -H 'Host: words.example' http://127.0.0.1:3210/healthz
           test "$(curl -s -o /dev/null -w '%{http_code}' -H 'Host: words.example' http://127.0.0.1:3210/api/backup)" = 401
           docker exec afterword-ci npm run backup
