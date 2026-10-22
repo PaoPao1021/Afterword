@@ -1,5 +1,6 @@
 import { isReviewDue } from './review.js';
 import { filterWords, wordTable } from './word-list.js';
+import { createDraftCache, hasDraftContent } from './draft-cache.js';
 
 const $ = (selector, root = document) => root.querySelector(selector);
 const h = value => String(value ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
@@ -31,6 +32,23 @@ let filter = 'all', query = '', paperQuery = '', draft = null, restoreData = nul
 let previousRoute = '', pendingNavigation = false;
 let practicePanel = 'context';
 let modelStatus = { ready: false, state: 'disabled', message: '接口已预留，暂未启用。', maxSourceLength: 20000 };
+const draftCache = createDraftCache(() => window.sessionStorage);
+const recoveredDraft = draftCache.load();
+draft = recoveredDraft.draft;
+let draftTimer;
+let draftMessage = recoveredDraft.state === 'restored' ? '已恢复本标签页草稿。预览修改已保留，保存前需要重新检查。' : recoveredDraft.state === 'expired' ? '旧草稿超过 7 天，已清理；已入库的内容不受影响。' : ['unavailable', 'invalid'].includes(recoveredDraft.state) ? '浏览器临时草稿不可用或无法恢复，请勿依赖刷新恢复。' : '未入库的草稿会临时保存在当前标签页。';
+
+function persistDraft() {
+  clearTimeout(draftTimer);
+  const saved = draftCache.save(draft);
+  draftMessage = !saved ? '临时保存失败（内容过大或浏览器限制），请保留此页面并尽快确认入库。' : hasDraftContent(draft) ? '草稿已临时保存到当前标签页；尚未加入词库。' : '暂无未保存的录入草稿。';
+  if ($('#draft-status')) $('#draft-status').textContent = draftMessage;
+}
+function queueDraftSave() {
+  clearTimeout(draftTimer);
+  if ($('#draft-status')) $('#draft-status').textContent = '正在临时保存草稿…';
+  draftTimer = setTimeout(persistDraft, 300);
+}
 
 async function api(path, body, method = 'POST') {
   const controller = new AbortController();
@@ -176,13 +194,17 @@ function renderWordRows() {
 function renderImport() {
   const requested = route().params.get('paper');
   if (!draft) draft = { paperId: requested || data.papers[0]?.id || '', text: '', modelText: '', preview: null, dirty: false, requestId: null };
-  if (requested && draft.paperId !== requested) draft = { paperId: requested, text: '', modelText: '', preview: null, dirty: false, requestId: null };
+  if (requested && draft.paperId !== requested) {
+    if (hasDraftContent(draft)) { history.replaceState(null, '', '#/import'); toast('已保留未保存草稿；如需改归档，请在试卷选择框中切换'); }
+    else draft.paperId = requested;
+  }
   if (draft.paperId && !data.papers.some(p => p.id === draft.paperId)) {
-    draft.paperId = ''; draft.preview = null; draft.requestId = null;
+    draft.paperId = ''; draft.dirty = !!draft.preview; draft.requestId = null;
     history.replaceState(null, '', '#/import');
     toast('原试卷已不存在，输入内容已保留，请重新选择归档试卷');
   }
   main.innerHTML = `${heading('录入词条', '粘贴词汇表，检查后保存。')}
+    <section class="draft-status-bar" aria-label="录入草稿"><div><p id="draft-status" role="status">${h(draftMessage)}</p><p class="helper-note">仅当前浏览器标签页临时保存，不跨设备、不含在词库备份中。关闭或清理浏览器后可能丢失；最长保留 7 天。共用电脑请在离开前清空。</p></div>${button('清空草稿', 'clear-draft', 'text')}</section>
     <section class="import-form" aria-label="录入词条">
       <div class="field"><label for="import-paper">试卷</label><div class="import-paper"><select id="import-paper"><option value="">请选择一套试卷</option>${data.papers.map(p => `<option value="${p.id}" ${p.id === draft.paperId ? 'selected' : ''}>${h(p.label)}</option>`).join('')}</select>${button('新建试卷', 'new-paper', '', 'data-context="import"', 'plus')}</div></div>
       <div class="import-label"><label for="import-text">英文与中文释义</label>${button('填入示例', 'sample', 'text small')}</div>
@@ -199,7 +221,7 @@ function renderImport() {
 function renderPreview() {
   const target = $('#import-preview'); if (!target || !draft?.preview) return;
   const { rows, counts, ignored } = draft.preview;
-  target.innerHTML = `<section class="panel"><div class="panel-title"><h2>${draft.preview.generatedBy === 'model' ? '核对模型整理结果' : '检查词条'}</h2><span class="helper-note">${rows.length} 行内容${ignored ? ` · 已识别 ${ignored} 行表头 / 格式标记` : ''}</span></div><div class="preview-info">${[['added', '新增', ''], ['duplicate', '重复跳过', ''], ['conflict', '释义冲突', 'warn'], ['invalid', '需要修改', 'error'], ['excluded', '已排除', '']].filter(([key]) => counts[key] > 0).map(([key, label, style]) => `<span class="${style}">${label} ${counts[key]}</span>`).join('')}</div><div class="preview-scroll"><table class="preview-table"><thead><tr><th>保留</th><th>英文</th><th>中文释义</th><th>检查结果</th></tr></thead><tbody>${rows.map((r, index) => `<tr class="${r.kind}" data-row="${index}"><td><input type="checkbox" data-field="included" aria-label="保留第 ${r.line} 行" ${!r.excluded ? 'checked' : ''}><span class="helper-note"> ${r.line}</span></td><td><input data-field="english" aria-label="第 ${r.line} 行英文" value="${h(r.english)}" maxlength="300"></td><td><textarea data-field="meaning" aria-label="第 ${r.line} 行中文释义" maxlength="5000">${h(r.meaning)}</textarea>${r.error ? `<p class="raw-line">原始行：${h(r.raw)}</p>` : ''}${r.kind === 'conflict' ? `<p class="helper-note">已有：${r.previous.map(h).join('；')}</p>` : ''}</td><td><p class="row-label">${h(r.error && !r.excluded ? r.error : { added: '新增', duplicate: '完全重复 · 跳过', conflict: '同词不同释义', invalid: '需要修改', excluded: '已排除' }[r.kind])}</p>${r.kind === 'conflict' ? `<select data-field="strategy" aria-label="第 ${r.line} 行冲突处理"><option value="merge" ${r.strategy === 'merge' ? 'selected' : ''}>合并释义</option><option value="replace" ${r.strategy === 'replace' ? 'selected' : ''}>替换释义</option></select>` : ''}</td></tr>`).join('')}</tbody></table></div><div class="import-footer"><p class="helper-note" id="preview-note">${draft.dirty ? '预览有修改，请重新检查后保存。' : counts.invalid ? '请修改或取消勾选异常行，再重新检查。' : '同词不同释义默认合并；完全重复内容不会再次新增。'}</p><div class="actions">${button('重新检查', 'recheck', '')}${button('确认保存', 'save-import', 'primary', rows.length ? '' : 'disabled', 'check')}</div></div></section>`;
+  target.innerHTML = `<section class="panel"><div class="panel-title"><h2>${draft.preview.generatedBy === 'model' ? '核对模型整理结果' : '检查词条'}</h2><span class="helper-note">${rows.length} 行内容${ignored ? ` · 已识别 ${ignored} 行表头 / 格式标记` : ''}</span></div><div class="preview-info">${[['added', '新增', ''], ['duplicate', '重复跳过', ''], ['conflict', '释义冲突', 'warn'], ['invalid', '需要修改', 'error'], ['excluded', '已排除', '']].filter(([key]) => counts[key] > 0).map(([key, label, style]) => `<span class="${style}">${label} ${counts[key]}</span>`).join('')}</div><div class="preview-scroll"><table class="preview-table"><thead><tr><th>保留</th><th>英文</th><th>中文释义</th><th>检查结果</th></tr></thead><tbody>${rows.map((r, index) => `<tr class="${r.kind}" data-row="${index}"><td><input type="checkbox" data-field="included" aria-label="保留第 ${r.line} 行" ${!r.excluded ? 'checked' : ''}><span class="helper-note"> ${r.line}</span></td><td><input data-field="english" aria-label="第 ${r.line} 行英文" value="${h(r.english)}" maxlength="300"></td><td><textarea data-field="meaning" aria-label="第 ${r.line} 行中文释义" maxlength="5000">${h(r.meaning)}</textarea>${r.error ? `<p class="raw-line">原始行：${h(r.raw)}</p>` : ''}${r.kind === 'conflict' ? `<p class="helper-note">已有：${r.previous.map(h).join('；')}</p>` : ''}</td><td><p class="row-label">${h(r.error && !r.excluded ? r.error : { unchecked: '待重新检查', added: '新增', duplicate: '完全重复 · 跳过', conflict: '同词不同释义', invalid: '需要修改', excluded: '已排除' }[r.kind])}</p>${r.kind === 'conflict' ? `<select data-field="strategy" aria-label="第 ${r.line} 行冲突处理"><option value="merge" ${r.strategy === 'merge' ? 'selected' : ''}>合并释义</option><option value="replace" ${r.strategy === 'replace' ? 'selected' : ''}>替换释义</option></select>` : ''}</td></tr>`).join('')}</tbody></table></div><div class="import-footer"><p class="helper-note" id="preview-note">${draft.dirty ? '预览有修改，请重新检查后保存。' : counts.invalid ? '请修改或取消勾选异常行，再重新检查。' : '同词不同释义默认合并；完全重复内容不会再次新增。'}</p><div class="actions">${button('重新检查', 'recheck', '')}${button('确认保存', 'save-import', 'primary', rows.length ? '' : 'disabled', 'check')}</div></div></section>`;
 }
 function renderStudy() {
   const s = data.session;
@@ -347,6 +369,7 @@ async function studyAction(action, answer) {
   requestAnimationFrame(() => { const target = $('#spelling-answer') || $('[data-action="study-continue"]'); if (target && !modal.open) target.focus({ preventScroll: true }); });
 }
 async function recheck() {
+  if (!draft.paperId) throw new Error('请先选择或新建一套试卷');
   const generatedBy = draft.preview.generatedBy;
   draft.preview = await api('/import/preview', { paperId: draft.paperId, rows: draft.preview.rows });
   if (generatedBy) draft.preview.generatedBy = generatedBy;
@@ -359,6 +382,11 @@ function importPrompt() {
 }
 async function handleAction(element) {
   const action = element.dataset.action;
+  if (action === 'clear-draft') {
+    if (!hasDraftContent(draft)) return toast('暂无需要清空的草稿');
+    return confirmDialog('清空录入草稿？', '将清空当前输入、模型原文和预览修改。已经保存到词库的内容不受影响。', 'confirm-clear-draft');
+  }
+  if (action === 'confirm-clear-draft') { draft = null; persistDraft(); closeModal(); renderImport(); return toast('录入草稿已清空'); }
   if (action === 'refresh-calendar') { await refresh(); render(); $('[data-action="refresh-calendar"]')?.focus({ preventScroll: true }); toast('复习日历已更新'); return; }
   if (action === 'calendar-day') {
     await refresh();
@@ -370,8 +398,8 @@ async function handleAction(element) {
   }
   if (action === 'calendar-review') { closeModal(); return studyDialog('', 'due'); }
   if (action === 'logout') {
-    if (draft?.text && !window.confirm('退出将关闭当前页面，未保存的录入内容会丢失。确认退出？')) return;
-    await api('/logout', {}); location.assign('/login'); return;
+    if (hasDraftContent(draft) && !window.confirm('退出会清空当前标签页的录入草稿，包括模型原文和预览修改。确认退出？')) return;
+    await api('/logout', {}); draft = null; persistDraft(); location.assign('/login'); return;
   }
   if (action === 'close-modal') return closeModal();
   if (action === 'new-paper') return newPaperDialog(element.dataset.context || '');
@@ -435,7 +463,7 @@ async function handleAction(element) {
   }
   if (action === 'confirm-delete-paper') { await api(`/papers/${element.dataset.id}`, {}, 'DELETE'); closeModal(); await refresh(); go('/papers'); return toast('试卷已删除'); }
   if (action === 'sample') {
-    if (draft.text.trim()) return confirmDialog('替换当前输入？', '将把输入框里的文字替换为格式示例，已保存的词库不会改变。', 'confirm-sample');
+    if (hasDraftContent(draft)) return confirmDialog('替换当前输入？', '将把输入框里的文字替换为格式示例并清除当前预览修改，已保存的词库不会改变。', 'confirm-sample');
     return setSample();
   }
   if (action === 'confirm-sample') { closeModal(); return setSample(); }
@@ -468,14 +496,14 @@ async function handleAction(element) {
     if (draft.dirty) { await recheck(); return toast('修改已重新检查，请核对结果后再次确认保存'); }
     if (draft.preview.counts.invalid) throw new Error('请先修改或取消勾选异常行，再重新检查');
     const result = await api('/import/confirm', { paperId: draft.paperId, rows: draft.preview.rows, requestId: draft.requestId });
-    const paperId = draft.paperId; draft = null; await refresh(); go(`/papers/${paperId}`); return toast(`已保存：新增 ${result.counts.added}，更新 ${result.counts.conflict}，重复跳过 ${result.counts.duplicate}`);
+    const paperId = draft.paperId; draft = null; persistDraft(); await refresh(); go(`/papers/${paperId}`); return toast(`已保存：新增 ${result.counts.added}，更新 ${result.counts.conflict}，重复跳过 ${result.counts.duplicate}`);
   }
   if (action === 'pause-study') { window.speechSynthesis?.cancel(); await refresh(); go('/home'); return toast('进度已保存，随时可以继续'); }
   if (action === 'end-study') return confirmDialog('提前结束这一组？', '已记录的掌握状态会保留。若只是暂时离开，可选择取消后点击“暂停”，下次接着学。', 'confirm-end-study');
   if (action === 'confirm-end-study') { closeModal(); return studyAction('end'); }
   if (action.startsWith('study-')) return studyAction(action.slice(6));
   if (action === 'confirm-restore') {
-    const result = await api('/backup/restore', restoreData); restoreData = null; draft = null; closeModal(); await refresh(); render();
+    const result = await api('/backup/restore', restoreData); restoreData = null; draft = null; persistDraft(); closeModal(); await refresh(); render();
     return showModal('恢复完成', `<p class="modal-description">已恢复 ${result.counts.papers} 套试卷、${result.counts.words} 个词条。</p><p class="helper-note">恢复前的数据备份已保留：</p><p class="storage-path">${h(result.backupFile)}</p><div class="modal-actions">${button('完成', 'close-modal', 'green')}</div>`);
   }
   if (action === 'retry') { await refresh(); return render(); }
@@ -502,6 +530,7 @@ async function run(work, trigger) {
     for (const field of lockedFields) if (field.isConnected) field.disabled = false;
     if (trigger?.isConnected) trigger.disabled = false;
     updateStudyAvailability();
+    persistDraft();
   }
 }
 document.addEventListener('click', event => {
@@ -517,7 +546,7 @@ document.addEventListener('submit', event => {
     if (form.id === 'paper-form') {
       const paper = await api('/papers', { examMonth: values.examMonth, volume: values.volume ? Number(values.volume) : 0 });
       closeModal(); await refresh();
-      if (form.dataset.context === 'import' && draft) { draft.paperId = paper.id; draft.preview = null; history.replaceState(null, '', '#/import'); renderImport(); }
+      if (form.dataset.context === 'import' && draft) { draft.paperId = paper.id; draft.dirty = !!draft.preview; draft.requestId = null; history.replaceState(null, '', '#/import'); renderImport(); }
       else go(`/papers/${paper.id}`);
       toast(paper.existing ? '这套试卷已存在' : '试卷已创建，可以开始录入词条');
     } else if (form.id === 'entry-form') {
@@ -548,20 +577,21 @@ document.addEventListener('input', event => {
     else { record[field] = element.value; if (field === 'english' || field === 'meaning') record.error = ''; }
     draft.dirty = true; $('#preview-note').textContent = '预览有修改，请重新检查后保存。';
   }
+  if (['import-text', 'model-text'].includes(element.id) || row) queueDraftSave();
 });
 document.addEventListener('change', event => {
   if (['study-paper', 'study-filter', 'study-practice'].includes(event.target.id)) {
     if (event.target.id === 'study-filter') event.target.form.elements.spelling.checked = data.preferences[event.target.value === 'new' ? 'learnSpelling' : 'reviewSpelling'];
     updateStudyAvailability();
   }
-  if (event.target.id === 'import-paper') { draft.paperId = event.target.value; draft.preview = null; history.replaceState(null, '', '#/import'); $('#import-preview').innerHTML = ''; }
+  if (event.target.id === 'import-paper') { draft.paperId = event.target.value; draft.dirty = !!draft.preview; draft.requestId = null; history.replaceState(null, '', '#/import'); renderPreview(); persistDraft(); }
   if (event.target.id === 'backup-file') {
     const file = event.target.files[0]; if (!file) return;
     run(async () => {
       if (file.size > 30_000_000) throw new Error('备份超过 30 MB，无法直接恢复');
       try { restoreData = JSON.parse(await file.text()); } catch { throw new Error('这个文件不是有效的 JSON 备份'); }
       const counts = await api('/backup/preview', restoreData);
-      showModal('确认恢复这份备份？', `<p class="modal-description">文件：${h(file.name)}</p><div class="notice">${counts.papers} 套试卷 · ${counts.words} 个词条 · ${counts.entries} 条试卷关联<br>${counts.activeSession ? '包含可继续的学习进度' : '没有未完成的学习组'}</div><p class="modal-description">恢复将整体替换当前词库。恢复前会自动备份现有数据到 data/backups/。</p><div class="modal-actions">${button('取消', 'close-modal')}${button('确认并恢复', 'confirm-restore', 'primary')}</div>`);
+      showModal('确认恢复这份备份？', `<p class="modal-description">文件：${h(file.name)}</p><div class="notice">${counts.papers} 套试卷 · ${counts.words} 个词条 · ${counts.entries} 条试卷关联<br>${counts.activeSession ? '包含可继续的学习进度' : '没有未完成的学习组'}</div><p class="modal-description">恢复将整体替换当前词库，并清空本标签页的录入草稿。恢复前会自动备份现有数据到 data/backups/。</p><div class="modal-actions">${button('取消', 'close-modal')}${button('确认并恢复', 'confirm-restore', 'primary')}</div>`);
     }).finally(() => { event.target.value = ''; });
   }
 });
@@ -598,7 +628,13 @@ window.addEventListener('hashchange', () => {
   closeModal(); render(); window.scrollTo(0, 0);
 });
 document.addEventListener('visibilitychange', () => {
+  if (document.visibilityState === 'hidden') persistDraft();
   if (document.visibilityState === 'visible' && !busy) run(async () => { await refresh(); if (!modal.open && route().path !== '/import') render(); else updateStudyAvailability(); });
+});
+window.addEventListener('pagehide', persistDraft);
+window.addEventListener('beforeunload', event => {
+  if (!hasDraftContent(draft)) return;
+  persistDraft(); event.preventDefault(); event.returnValue = '';
 });
 try { await refresh(); render(); }
 catch (error) { main.innerHTML = `<div class="fatal"><h2>暂时无法连接本机词库</h2><p>请确认终端中的服务正在运行。可以在项目目录执行 npm start，再重新连接。</p>${button('重新连接', 'retry', 'primary')}</div>`; toast(error.message); }

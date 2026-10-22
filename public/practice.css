@@ -1,6 +1,12 @@
 :root{--accent:#234d49;--muted:#62716f;--border:#e1e7e3;--surface:#f5f7f4;color:#253633;background:#fcfdfb}
 #auth-notice { position: fixed; top: 12px; left: 50%; transform: translateX(-50%); z-index: 1000; width: min(90%, 600px); padding: 16px 20px; border: 1px solid #c28f42; border-radius: 12px; background: #fff6df; color: #684510; box-shadow: 0 4px 24px #0002; font-size: 14px; line-height: 1.8; }
 #auth-notice a { text-decoration: underline; color: #304e70; margin: 0 5px; }
+.draft-status-bar { display: flex; align-items: start; gap: 18px; justify-content: space-between; margin: -8px 0 24px; padding: 16px 18px; border: 1px solid #d5e1d5; border-radius: 12px; background: #f2f6ef; }
+.draft-status-bar>div { min-width: 0; }
+.draft-status-bar p { margin: 0; font-size: 13px; line-height: 1.8; }
+.draft-status-bar .helper-note { margin-top: 5px; font-size: 12px; }
+.draft-status-bar>.button { flex-shrink: 0; }
+@media (max-width: 540px) { .draft-status-bar { flex-direction: column; gap: 8px; } }
 .review-calendar { margin: 28px 0; padding: 28px; border: 1px solid var(--border); border-radius: 16px; background: #fff; }
 .review-calendar .section-heading { flex-wrap: wrap; gap: 12px; }
 .review-calendar h2 { font-size: 20px; margin: 0; }
