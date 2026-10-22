@@ -109,6 +109,7 @@ function render() {
   else if (path === '/settings') renderSettings();
   else { go('/papers'); }
   if (path === '/study' && data.session?.phase === 'done') main.insertAdjacentHTML('afterbegin', reviewSummary());
+  if (path === '/home' || path === '/records') main.insertAdjacentHTML('beforeend', reviewCalendar());
   updateStudyAvailability();
 }
 function renderHome() {
@@ -123,6 +124,23 @@ function renderHome() {
 function renderRecords() {
   const stats = data.stats;
   main.innerHTML = `${heading('每一点进步，都算数。', '完成记忆与所选拼写后计入记录；同一天重复练习同一词只计一次。')}<div class="record-totals"><div><strong>${stats.today.learned}</strong><span>今日新学</span></div><div><strong>${stats.today.reviewed}</strong><span>今日复习</span></div><div><strong>${stats.streak}</strong><span>连续学习天数</span></div><div><strong>${stats.totalSessions}</strong><span>产生完成记录的组数</span></div></div><section class="panel"><h2>最近 14 天</h2><div class="activity-grid">${stats.days.map(day => `<div class="activity-day ${day.learned + day.reviewed ? 'has-activity' : ''}"><span>${day.day.slice(5).replace('-', '/')}</span><strong>${day.learned + day.reviewed}</strong><small>新 ${day.learned} / 复 ${day.reviewed}</small></div>`).join('')}</div><p class="helper-note">北京时间凌晨 4 点切换学习日。旧版学习没有逐日记录，不补造历史数据。</p></section>${reviewSummary()}`;
+}
+function reviewCalendar() {
+  const forecast = data.forecast;
+  const maximum = Math.max(1, ...forecast.days.map(day => day.count));
+  return `<section class="review-calendar" aria-labelledby="calendar-title"><div class="section-heading"><div><p class="eyebrow">A GENTLE RHYTHM</p><h2 id="calendar-title">七日复习日历</h2></div>${button('更新日历', 'refresh-calendar', 'text')}</div><p class="calendar-summary">现在可复习 <strong>${forecast.dueNow}</strong> 词 <span>· 今日稍后到期 ${forecast.laterToday} 词</span></p><div class="calendar-days">${forecast.days.map((day, index) => `<button class="calendar-day ${index === 0 ? 'is-today' : ''}" data-action="calendar-day" data-day="${day.day}" aria-label="${day.day}，${day.count} 个待复习词条，查看列表"><span>${index === 0 ? '今天' : index === 1 ? '明天' : new Date(day.day + 'T00:00:00Z').toLocaleDateString('zh-CN', { weekday: 'short', timeZone: 'UTC' })}<small>${day.day.slice(5).replace('-', '/')}</small></span><strong>${day.count}<small>词</small></strong><progress max="${maximum}" value="${day.count}" aria-hidden="true"></progress></button>`).join('')}</div><p class="helper-note">今天含此前积压 ${forecast.overdue} 词、未安排日期的旧词 ${forecast.unscheduled} 词；七日后另有 ${forecast.later} 词。按北京时间凌晨 4 点分日。</p><p class="helper-note">仅展示当前已学词的下一次到期日，不预测新词或后续轮次；学习后会重新安排。点日期可查看词条。</p></section>`;
+}
+function calendarDay(dayKey, page = 0) {
+  const day = data.forecast.days.find(item => item.day === dayKey);
+  if (!day) { closeModal(); render(); toast('学习日已切换，日历已更新'); return; }
+  const lastPage = Math.max(0, Math.ceil(day.count / 50) - 1);
+  const currentPage = Math.max(0, Math.min(lastPage, page));
+  const wordMap = new Map(data.words.map(word => [word.id, word]));
+  const words = day.wordIds.slice(currentPage * 50, (currentPage + 1) * 50).map(id => wordMap.get(id)).filter(Boolean);
+  const today = day === data.forecast.days[0];
+  showModal(`${day.day} · 待复习词条`, `<p class="modal-description">共 ${day.count} 词${today ? `，其中现在可复习 ${data.forecast.dueNow} 词。` : '，尚未到期，不会提前改动复习计划。'}</p><div class="calendar-word-list">${words.map(word => `<button data-action="word-detail" data-id="${word.id}"><span><strong>${h(word.english)}</strong><small>${h([...new Set(word.sources.flatMap(source => source.meanings))].join('；'))}</small></span>${icon('arrow')}</button>`).join('') || '<p class="helper-note">这一天暂无待复习词条。完成学习后，这里会出现下一次复习安排。</p>'}</div>${lastPage ? `<div class="calendar-pagination">${button('上一页', 'calendar-day', '', `data-day="${day.day}" data-page="${currentPage - 1}" ${currentPage === 0 ? 'disabled' : ''}`)}<span>${currentPage + 1} / ${lastPage + 1}</span>${button('下一页', 'calendar-day', '', `data-day="${day.day}" data-page="${currentPage + 1}" ${currentPage === lastPage ? 'disabled' : ''}`)}</div>` : ''}<div class="modal-actions">${button('返回日历', 'close-modal')}${today && data.forecast.dueNow ? button('开始到期复习', 'calendar-review', 'primary') : ''}</div>`);
+  $('#modal-title').tabIndex = -1;
+  $('#modal-title').focus();
 }
 function renderPapers() {
   main.innerHTML = `${heading('试卷', '按考试年月整理单词和短语。', `<div class="actions">${data.words.length ? button('开始复习', 'start-dialog') : ''}${button('新建试卷', 'new-paper', 'primary', '', 'plus')}</div>`)}
@@ -341,6 +359,16 @@ function importPrompt() {
 }
 async function handleAction(element) {
   const action = element.dataset.action;
+  if (action === 'refresh-calendar') { await refresh(); render(); $('[data-action="refresh-calendar"]')?.focus({ preventScroll: true }); toast('复习日历已更新'); return; }
+  if (action === 'calendar-day') {
+    await refresh();
+    if (!modal.open) {
+      render();
+      [...main.querySelectorAll('[data-action="calendar-day"]')].find(button => button.dataset.day === element.dataset.day)?.focus({ preventScroll: true });
+    }
+    return calendarDay(element.dataset.day, Number(element.dataset.page) || 0);
+  }
+  if (action === 'calendar-review') { closeModal(); return studyDialog('', 'due'); }
   if (action === 'logout') {
     if (draft?.text && !window.confirm('退出将关闭当前页面，未保存的录入内容会丢失。确认退出？')) return;
     await api('/logout', {}); location.assign('/login'); return;
