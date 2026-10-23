@@ -222,6 +222,13 @@ function renderPreview() {
   const target = $('#import-preview'); if (!target || !draft?.preview) return;
   const { rows, counts, ignored } = draft.preview;
   target.innerHTML = `<section class="panel"><div class="panel-title"><h2>${draft.preview.generatedBy === 'model' ? '核对模型整理结果' : '检查词条'}</h2><span class="helper-note">${rows.length} 行内容${ignored ? ` · 已识别 ${ignored} 行表头 / 格式标记` : ''}</span></div><div class="preview-info">${[['added', '新增', ''], ['duplicate', '重复跳过', ''], ['conflict', '释义冲突', 'warn'], ['invalid', '需要修改', 'error'], ['excluded', '已排除', '']].filter(([key]) => counts[key] > 0).map(([key, label, style]) => `<span class="${style}">${label} ${counts[key]}</span>`).join('')}</div><div class="preview-scroll"><table class="preview-table"><thead><tr><th>保留</th><th>英文</th><th>中文释义</th><th>检查结果</th></tr></thead><tbody>${rows.map((r, index) => `<tr class="${r.kind}" data-row="${index}"><td><input type="checkbox" data-field="included" aria-label="保留第 ${r.line} 行" ${!r.excluded ? 'checked' : ''}><span class="helper-note"> ${r.line}</span></td><td><input data-field="english" aria-label="第 ${r.line} 行英文" value="${h(r.english)}" maxlength="300"></td><td><textarea data-field="meaning" aria-label="第 ${r.line} 行中文释义" maxlength="5000">${h(r.meaning)}</textarea>${r.error ? `<p class="raw-line">原始行：${h(r.raw)}</p>` : ''}${r.kind === 'conflict' ? `<p class="helper-note">已有：${r.previous.map(h).join('；')}</p>` : ''}</td><td><p class="row-label">${h(r.error && !r.excluded ? r.error : { unchecked: '待重新检查', added: '新增', duplicate: '完全重复 · 跳过', conflict: '同词不同释义', invalid: '需要修改', excluded: '已排除' }[r.kind])}</p>${r.kind === 'conflict' ? `<select data-field="strategy" aria-label="第 ${r.line} 行冲突处理"><option value="merge" ${r.strategy === 'merge' ? 'selected' : ''}>合并释义</option><option value="replace" ${r.strategy === 'replace' ? 'selected' : ''}>替换释义</option></select>` : ''}</td></tr>`).join('')}</tbody></table></div><div class="import-footer"><p class="helper-note" id="preview-note">${draft.dirty ? '预览有修改，请重新检查后保存。' : counts.invalid ? '请修改或取消勾选异常行，再重新检查。' : '同词不同释义默认合并；完全重复内容不会再次新增。'}</p><div class="actions">${button('重新检查', 'recheck', '')}${button('确认保存', 'save-import', 'primary', rows.length ? '' : 'disabled', 'check')}</div></div></section>`;
+  for (const [index, row] of rows.entries()) {
+    if (row.kind !== 'duplicate' || !row.previous?.length) continue;
+    $(`[data-row="${index}"] td:last-child`, target).insertAdjacentHTML('beforeend', `<select data-field="strategy" aria-label="第 ${row.line} 行冲突处理"><option value="merge" ${row.strategy === 'merge' ? 'selected' : ''}>合并释义</option><option value="replace" ${row.strategy === 'replace' ? 'selected' : ''}>替换释义</option></select>`);
+  }
+  if (draft.preview.studyImpact > 0) {
+    $('.preview-info', target).insertAdjacentHTML('afterend', `<p class="notice warning" role="status">本次导入涉及当前学习组的 ${Number(draft.preview.studyImpact)} 个词。确认保存会结束当前组，避免继续使用旧释义；已记录的学习结果保留。${draft.dirty ? '预览已修改，请重新检查影响范围。' : ''}</p>`);
+  }
 }
 function renderStudy() {
   const s = data.session;
@@ -496,7 +503,7 @@ async function handleAction(element) {
     if (draft.dirty) { await recheck(); return toast('修改已重新检查，请核对结果后再次确认保存'); }
     if (draft.preview.counts.invalid) throw new Error('请先修改或取消勾选异常行，再重新检查');
     const result = await api('/import/confirm', { paperId: draft.paperId, rows: draft.preview.rows, requestId: draft.requestId });
-    const paperId = draft.paperId; draft = null; persistDraft(); await refresh(); go(`/papers/${paperId}`); return toast(`已保存：新增 ${result.counts.added}，更新 ${result.counts.conflict}，重复跳过 ${result.counts.duplicate}`);
+    const paperId = draft.paperId; draft = null; persistDraft(); await refresh(); go(`/papers/${paperId}`); return toast(`已保存：新增 ${result.counts.added}，更新 ${result.counts.conflict}，重复跳过 ${result.counts.duplicate}${result.sessionEnded ? '；释义已变化，原学习组已结束' : ''}`);
   }
   if (action === 'pause-study') { window.speechSynthesis?.cancel(); await refresh(); go('/home'); return toast('进度已保存，随时可以继续'); }
   if (action === 'end-study') return confirmDialog('提前结束这一组？', '已记录的掌握状态会保留。若只是暂时离开，可选择取消后点击“暂停”，下次接着学。', 'confirm-end-study');

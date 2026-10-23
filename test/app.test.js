@@ -85,6 +85,52 @@ test('import previews new, duplicate, conflict, invalid and exclusion; commit is
   assert.deepEqual(words.find(w => w.normalized === 'retain').sources[0].meanings, ['保留', '记住']);
 });
 
+test('replace removes omitted meanings while merge subsets remain no-ops', t => {
+  const { store, paper } = fixture(t);
+  add(store, paper, 'retain = 保留\nretain = 记住');
+  const rows = [{ english: 'retain', meaning: '保留', strategy: 'merge' }];
+  assert.equal(store.preview({ paperId: paper.id, rows }).counts.duplicate, 1);
+  rows[0].strategy = 'replace';
+  const preview = store.preview({ paperId: paper.id, rows });
+  assert.equal(preview.counts.conflict, 1);
+  const request = { paperId: paper.id, rows: preview.rows, requestId: randomUUID() };
+  store.confirmImport(request);
+  store.confirmImport(request);
+  assert.deepEqual(store.overview().words[0].sources[0].meanings, ['保留']);
+  assert.equal(store.preview({ paperId: paper.id, rows }).counts.duplicate, 1);
+});
+
+test('import previews learning impact and invalidates affected cards only on confirmation', t => {
+  const { store, paper } = fixture(t);
+  add(store, paper, 'retain = 保留');
+  const session = store.startSession({ mode: 'context' });
+  const preview = store.preview({ paperId: paper.id, text: 'retain = 记住\nretain = 保持' });
+  assert.equal(preview.studyImpact, 1);
+  assert.deepEqual(store.session(), session);
+  store.confirmImport({ paperId: paper.id, rows: preview.rows, requestId: randomUUID() });
+  assert.equal(store.session().reason, 'content-changed');
+  assert.equal(store.session().phase, 'done');
+  assert.throws(() => store.sessionAction({ sessionId: session.id, revision: session.revision, action: 'unknown' }), { status: 409 });
+  store.validateBackup(store.backup());
+});
+
+test('duplicate, excluded and other-paper imports preserve scoped learning', t => {
+  const { store, paper } = fixture(t);
+  add(store, paper, 'retain = 保留');
+  const other = store.createPaper({ examMonth: '2025-12' });
+  const session = store.startSession({ mode: 'context', paperId: paper.id });
+  for (const [target, rows] of [
+    [paper, [{ english: 'retain', meaning: '保留' }]],
+    [paper, [{ english: 'retain', meaning: '记住', excluded: true }, { english: 'new', meaning: '新的' }]],
+    [other, [{ english: 'retain', meaning: '保持' }]],
+  ]) {
+    const preview = store.preview({ paperId: target.id, rows });
+    assert.equal(preview.studyImpact, 0);
+    store.confirmImport({ paperId: target.id, rows: preview.rows, requestId: randomUUID() });
+    assert.deepEqual(store.session(), session);
+  }
+});
+
 test('correcting an invalid preview row allows it to be saved', t => {
   const { store, paper } = fixture(t);
   const p = store.preview({ paperId: paper.id, text: 'bad format' });
@@ -93,6 +139,29 @@ test('correcting an invalid preview row allows it to be saved', t => {
   assert.equal(checked.counts.invalid, 0);
   store.confirmImport({ paperId: paper.id, rows: checked.rows, requestId: randomUUID() });
   assert.equal(store.overview().words[0].english, 'correct');
+});
+
+test('preview normalizes untrusted row numbers including excluded rows', t => {
+  const { store, paper } = fixture(t);
+  const rows = ['<img src=x>', -1, 1.5, {}, Number.MAX_SAFE_INTEGER + 1, 42].map((line, index) => ({ line, english: 'word', meaning: '词', excluded: index === 0 }));
+  assert.deepEqual(store.preview({ paperId: paper.id, rows }).rows.map(row => row.line), [1, 2, 3, 4, 5, 42]);
+});
+
+test('import checks current learning state and receipt replay cannot end a new group', t => {
+  const { store, paper } = fixture(t);
+  add(store, paper, 'retain = 保留');
+  const preview = store.preview({ paperId: paper.id, text: 'retain = 记住' });
+  assert.equal(preview.studyImpact, 0);
+  store.startSession({ mode: 'context' });
+  const request = { paperId: paper.id, rows: preview.rows, requestId: randomUUID() };
+  const result = store.confirmImport(request);
+  assert.equal(result.sessionEnded, true);
+  const session = store.startSession({ mode: 'context' });
+  assert.deepEqual(store.confirmImport(request), result);
+  assert.deepEqual(store.session(), session);
+  const invalid = store.preview({ paperId: paper.id, text: 'retain = 保持\nbroken' });
+  assert.throws(() => store.confirmImport({ paperId: paper.id, rows: invalid.rows, requestId: randomUUID() }), /异常行/);
+  assert.deepEqual(store.session(), session);
 });
 
 test('replacement replaces meanings and repeated confirmation is idempotent', t => {
