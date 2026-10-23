@@ -37,6 +37,54 @@ function finish(store) {
   while (store.session().phase !== 'done') { assert.ok(limit-- > 0); correctAnswer(store); store.validateBackup(store.backup()); }
 }
 
+test('starred practice uses the same paper scope as the library and refuses empty groups', context => {
+  const { store, paper } = fixture(context);
+  assert.throws(() => store.startSession({ mode: 'context', filter: 'starred' }), /没有可学习/);
+  assert.equal(store.session(), null);
+  const words = store.overview().words;
+  store.setWordDetails(words[0].id, { ...words[0].details, starred: true });
+  const other = store.createPaper({ examMonth: '2025-12' });
+  store.confirmImport({ paperId: other.id, requestId: randomUUID(), rows: [{ english: 'elsewhere', meaning: '别处' }] });
+  const elsewhere = store.overview().words.find(word => word.english === 'elsewhere');
+  store.setWordDetails(elsewhere.id, { ...elsewhere.details, starred: true });
+  const selected = filterWords(store.overview().words, { paperId: paper.id, filter: 'starred' });
+  const state = store.startSession({ mode: 'context', paperId: paper.id, filter: 'starred' });
+  assert.deepEqual(state.items.map(item => item.wordId), selected.map(word => word.id));
+  assert.equal(state.items.length, 1);
+  assert.equal(state.items[0].sources[0].paperId, paper.id);
+});
+
+test('star changes do not disrupt active practice and starred backups resume safely', context => {
+  const { store } = fixture(context, 'recall = 回忆');
+  const word = store.overview().words[0];
+  store.setWordDetails(word.id, { ...word.details, starred: true });
+  store.startSession({ mode: 'context', filter: 'starred', spelling: false });
+  correctAnswer(store);
+  const pending = store.session();
+  store.setWordDetails(word.id, { ...word.details, starred: false });
+  assert.deepEqual(store.session(), pending);
+  const backup = store.backup();
+  store.restore(backup);
+  assert.equal(store.session().filter, 'starred');
+  assert.deepEqual(store.session().pending, pending.pending);
+  finish(store);
+  assert.equal(store.overview().stats.today.learned, 1);
+  assert.throws(() => store.startSession({ mode: 'context', filter: 'starred' }), /没有可学习/);
+});
+
+test('early starred practice retains the due date and does not advance the review stage', context => {
+  const { store } = fixture(context, 'recall = 回忆');
+  const word = store.overview().words[0];
+  store.setWordDetails(word.id, { ...word.details, starred: true });
+  store.db.exec("UPDATE words SET status = 'mastered', review_streak = 3, due_at = '2026-10-25T03:00:00.000Z'");
+  store.startSession({ mode: 'context', filter: 'starred', spelling: false });
+  assert.equal(store.session().phase, 'recall');
+  finish(store);
+  const reviewed = store.overview().words[0];
+  assert.equal(reviewed.due_at, '2026-10-25T03:00:00.000Z');
+  assert.equal(reviewed.review_streak, 3);
+});
+
 test('restoring the same backup rejects stale learning actions on every restore', context => {
   const { store } = fixture(context);
   store.startSession({ mode: 'context', practice: 'spelling' });
