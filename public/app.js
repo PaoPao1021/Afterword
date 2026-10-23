@@ -350,6 +350,7 @@ function wordDetail(id) {
 function noteDialog(id) {
   const word = data.words.find(word => word.id === id); if (!word) return;
   showModal(`${word.english} · 我的笔记`, `<form id="note-form" data-id="${id}"><div class="field"><label for="note-example">语境原句</label><textarea id="note-example" name="example" maxlength="5000" placeholder="粘贴试卷里的原句，不自动编造例句。">${h(word.details.example)}</textarea></div><div class="field"><label for="note-translation">原句译文</label><textarea id="note-translation" name="translation" maxlength="5000">${h(word.details.translation)}</textarea></div><div class="field"><label for="note-text">搭配、词根或记忆联想</label><textarea id="note-text" name="note" maxlength="5000">${h(word.details.note)}</textarea></div><div class="modal-actions">${button('取消', 'close-modal')}<button class="button primary" type="submit">保存笔记</button></div></form>`);
+  $('#note-form', modal).dataset.baseline = JSON.stringify(word.details);
 }
 function pronounce(text, accent = data.preferences.accent) {
   if (!('speechSynthesis' in window)) return toast('此浏览器不支持设备朗读，请换用支持语音的浏览器。');
@@ -434,7 +435,7 @@ async function handleAction(element) {
   }
   if (action === 'toggle-star') {
     const word = data.words.find(word => word.id === element.dataset.id); if (!word) return;
-    await api(`/words/${word.id}/details`, { ...word.details, starred: !word.details.starred }, 'PUT'); await refresh(); render();
+    await api(`/words/${word.id}/details`, { ...word.details, starred: !word.details.starred, expected: word.details }, 'PUT'); await refresh(); render();
     if (modal.open) wordDetail(word.id);
     return;
   }
@@ -565,8 +566,8 @@ document.addEventListener('submit', event => {
     } else if (form.id === 'preferences-form') {
       await api('/preferences', { ...values, dailyGoal: Number(values.dailyGoal), groupSize: Number(values.groupSize), learnSpelling: values.learnSpelling === 'on', reviewSpelling: values.reviewSpelling === 'on' }, 'PUT'); await refresh(); render(); toast('学习偏好已保存');
     } else if (form.id === 'note-form') {
-      const word = data.words.find(word => word.id === form.dataset.id);
-      await api(`/words/${word.id}/details`, { ...word.details, ...values }, 'PUT'); closeModal(); await refresh(); render(); toast('语境与笔记已保存');
+      const expected = JSON.parse(form.dataset.baseline);
+      await api(`/words/${form.dataset.id}/details`, { ...expected, ...values, expected }, 'PUT'); closeModal(); await refresh(); render(); toast('语境与笔记已保存');
     }
   }, $('button[type="submit"]', form));
 });

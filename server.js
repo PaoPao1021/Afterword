@@ -75,7 +75,10 @@ export function createApp({ dataPath = join(root, 'data', 'cet6.sqlite'), llm = 
       if (req.method === 'POST' && path === '/api/logout') { res.setHeader('Set-Cookie', access.logout(req)); return json(200, { loggedOut: true }); }
       if (req.method === 'GET' && path === '/api/overview') return json(200, { ...store.overview(), access: { enabled: access.enabled } });
       if (req.method === 'PUT' && path === '/api/preferences') return json(200, store.setPreferences(body));
-      if (req.method === 'PUT' && /^\/api\/words\/[^/]+\/details$/.test(path)) return json(200, store.setWordDetails(decodeURIComponent(path.split('/')[3]), body));
+      if (req.method === 'PUT' && /^\/api\/words\/[^/]+\/details$/.test(path)) {
+        if (!Object.hasOwn(body, 'expected')) throw new AppError('缺少编辑前的笔记内容，请刷新页面后重试', 428);
+        return json(200, store.setWordDetails(decodeURIComponent(path.split('/')[3]), body, body.expected));
+      }
       if (req.method === 'GET' && path === '/api/source-types') return json(200, { version: 1, profiles: sourceProfiles() });
       if (req.method === 'GET' && path === '/api/llm/status') return json(200, llm.status());
       if (req.method === 'POST' && path === '/api/llm/preview') {

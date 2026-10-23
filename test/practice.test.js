@@ -352,6 +352,25 @@ test('preferences and notes validate bounds and starred list uses the shared fil
   assert.equal(store.backup().details.length, 0);
 });
 
+test('concurrent note edits merge independent fields and reject conflicting fields atomically', context => {
+  const { store } = fixture(context);
+  const word = store.overview().words[0], baseline = word.details;
+  store.setWordDetails(word.id, { ...baseline, starred: true }, baseline);
+  store.setWordDetails(word.id, { ...baseline, note: '电脑笔记' }, baseline);
+  let current = store.overview().words[0].details;
+  assert.deepEqual(current, { ...baseline, starred: true, note: '电脑笔记' });
+  store.setWordDetails(word.id, { ...baseline, example: 'An example.' }, baseline);
+  current = store.overview().words[0].details;
+  assert.equal(current.note, '电脑笔记');
+  assert.equal(current.example, 'An example.');
+  assert.throws(() => store.setWordDetails(word.id, { ...baseline, note: '平板笔记', translation: '不应保存' }, baseline), { status: 409 });
+  assert.deepEqual(store.overview().words[0].details, current);
+  assert.deepEqual(store.setWordDetails(word.id, { ...baseline, note: '电脑笔记' }, baseline), current);
+  store.setWordDetails(word.id, { ...current, note: '' }, current);
+  assert.equal(store.overview().words[0].details.note, '');
+  assert.throws(() => store.setWordDetails(word.id, baseline, null), { status: 400 });
+});
+
 test('backup IDs cannot inject HTML into rendered attributes', context => {
   const { store } = fixture(context);
   const backup = store.backup();
@@ -372,8 +391,11 @@ test('HTTP practice, preferences and notes persist with origin checks and backup
   assert.equal((await send('/api/preferences', { dailyGoal: 15 }, 'PUT')).status, 200);
   assert.equal((await send('/api/preferences', { dailyGoal: -1 }, 'PUT')).status, 400);
   assert.equal((await send('/api/preferences', { dailyGoal: 20 }, 'PUT', { Origin: 'https://example.com' })).status, 403);
-  assert.equal((await send(`/api/words/${word.id}/details`, { starred: true, note: '<script>文本</script>', example: '', translation: '' }, 'PUT')).status, 200);
-  assert.equal((await send('/api/words/missing/details', {}, 'PUT')).status, 404);
+  const details = { starred: true, note: '<script>文本</script>', example: '', translation: '' };
+  assert.equal((await send(`/api/words/${word.id}/details`, details, 'PUT')).status, 428);
+  assert.equal((await send(`/api/words/${word.id}/details`, { ...details, expected: word.details }, 'PUT')).status, 200);
+  assert.equal((await send(`/api/words/${word.id}/details`, { ...details, note: '旧页面覆盖', expected: word.details }, 'PUT')).status, 409);
+  assert.equal((await send('/api/words/missing/details', { ...details, expected: word.details }, 'PUT')).status, 404);
   const state = await (await send('/api/session', { mode: 'context', practice: 'spelling', size: 1 })).json();
   const pending = await (await send('/api/session/action', { sessionId: state.id, revision: state.revision, action: 'spell', answer: 'TEST' })).json();
   assert.equal(pending.pending.correct, true);
