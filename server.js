@@ -74,7 +74,11 @@ export function createApp({ dataPath = join(root, 'data', 'cet6.sqlite'), llm = 
       }
       if (req.method === 'POST' && path === '/api/logout') { res.setHeader('Set-Cookie', access.logout(req)); return json(200, { loggedOut: true }); }
       if (req.method === 'GET' && path === '/api/overview') return json(200, { ...store.overview(), access: { enabled: access.enabled } });
-      if (req.method === 'PUT' && path === '/api/preferences') return json(200, store.setPreferences(body));
+      if (req.method === 'PUT' && path === '/api/preferences') {
+        if (!Object.hasOwn(body, 'expected')) throw new AppError('缺少编辑前的学习偏好，请刷新页面后重试', 428);
+        const { expected, ...value } = body;
+        return json(200, store.setPreferences(value, expected));
+      }
       if (req.method === 'PUT' && /^\/api\/words\/[^/]+\/details$/.test(path)) {
         if (!Object.hasOwn(body, 'expected')) throw new AppError('缺少编辑前的笔记内容，请刷新页面后重试', 428);
         return json(200, store.setWordDetails(decodeURIComponent(path.split('/')[3]), body, body.expected));

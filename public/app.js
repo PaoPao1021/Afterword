@@ -297,6 +297,8 @@ function renderSettings() {
     <section class="settings-row"><div><h2>恢复备份</h2><p>选择 JSON 备份文件，检查内容后确认恢复。<br>恢复会替换当前词库，原数据会自动备份。</p></div><div class="file-control"><label class="button" for="backup-file">选择备份文件</label><input class="visually-hidden" id="backup-file" type="file" accept=".json,application/json"></div></section></div>
     ${data.access?.enabled ? `<section class="settings-row"><div><h2>私人访问</h2><p>仅限本人使用。共用电脑上使用完毕后请退出。</p></div>${button('退出登录', 'logout')}</section>` : ''}<section class="model-settings"><div class="section-heading"><h2>大模型接口</h2><span class="model-state">${modelStatus.ready ? '已配置' : modelStatus.state === 'disabled' ? '未启用' : '待配置'}</span></div><p class="subtext">${h(modelStatus.message)}</p>${modelStatus.ready ? `<p class="helper-note">服务：${h(modelStatus.serviceOrigin)} · 模型：${h(modelStatus.model)}</p>` : ''}<details class="format-help"><summary>以后如何接入？</summary><p>将项目中的 .env.example 复制为 .env，填写服务地址、模型名和密钥，将 LLM_ENABLED 设为 true，然后重启服务。密钥只保存在服务端。</p><p>支持 Chat Completions 兼容接口。启用后，在“录入词条”展开“用大模型整理原文”。</p></details></section>
     <details class="storage-details"><summary>数据保存在哪里？</summary><p>词库保存在本机，清理浏览器缓存不会删除词库。建议定期下载备份并另存一份。</p><dl><dt>词库文件</dt><dd class="storage-path">data/cet6.sqlite</dd><dt>恢复前的自动备份</dt><dd class="storage-path">data/backups/</dd></dl></details>`;
+  $('#preferences-form').dataset.baseline = JSON.stringify(preferences);
+  $('#preferences-form').insertAdjacentHTML('beforeend', '<p id="preferences-error" class="modal-error" role="alert"></p>');
 }
 function studyDefinitions(sources) {
   // Group identical definition sets while retaining every paper's attribution.
@@ -529,7 +531,9 @@ async function run(work, trigger) {
   main.setAttribute('aria-busy', 'true');
   try { await work(); }
   catch (error) {
-    if (error.status === 409) { await refresh().catch(() => {}); render(); }
+    const settingsConflict = error.status === 409 && trigger?.form?.id === 'preferences-form';
+    if (error.status === 409) { await refresh().catch(() => {}); if (!settingsConflict) render(); }
+    if (settingsConflict) $('#preferences-error').textContent = error.message;
     if (modal.open && $('#modal-error')) $('#modal-error').textContent = error.message;
     toast(error.message);
   } finally {
@@ -564,7 +568,7 @@ document.addEventListener('submit', event => {
     } else if (form.id === 'spelling-form') {
       await studyAction('spell', values.answer);
     } else if (form.id === 'preferences-form') {
-      await api('/preferences', { ...values, dailyGoal: Number(values.dailyGoal), groupSize: Number(values.groupSize), learnSpelling: values.learnSpelling === 'on', reviewSpelling: values.reviewSpelling === 'on' }, 'PUT'); await refresh(); render(); toast('学习偏好已保存');
+      await api('/preferences', { ...values, dailyGoal: Number(values.dailyGoal), groupSize: Number(values.groupSize), learnSpelling: values.learnSpelling === 'on', reviewSpelling: values.reviewSpelling === 'on', expected: JSON.parse(form.dataset.baseline) }, 'PUT'); await refresh(); render(); toast('学习偏好已保存');
     } else if (form.id === 'note-form') {
       const expected = JSON.parse(form.dataset.baseline);
       await api(`/words/${form.dataset.id}/details`, { ...expected, ...values, expected }, 'PUT'); closeModal(); await refresh(); render(); toast('语境与笔记已保存');

@@ -338,6 +338,26 @@ test('daily counts deduplicate new and review events and switch at 04:00 China t
   assert.equal(learningStats(events, new Date('2026-10-22T04:00:00Z')).streak, 0);
 });
 
+test('partial preferences preserve prior choices and stale edits merge only independent changes', context => {
+  const { store } = fixture(context);
+  store.setPreferences({ accent: 'en-US', learnSpelling: false });
+  store.setPreferences({ dailyGoal: 30 });
+  const baseline = store.preferences();
+  assert.equal(baseline.accent, 'en-US');
+  assert.equal(baseline.learnSpelling, false);
+  store.setPreferences({ groupSize: 50 }, baseline);
+  store.setPreferences({ ...baseline, theme: 'paper' }, baseline);
+  const current = store.preferences();
+  assert.equal(current.groupSize, 50);
+  assert.equal(current.theme, 'paper');
+  assert.throws(() => store.setPreferences({ groupSize: 20, dailyGoal: 99 }, baseline), { status: 409 });
+  assert.deepEqual(store.preferences(), current);
+  assert.deepEqual(store.setPreferences({ groupSize: 50 }, baseline), current);
+  assert.throws(() => store.setPreferences({ groupSize: 20 }, {}), { status: 400 });
+  assert.throws(() => store.setPreferences(null));
+  assert.deepEqual(store.preferences(), current);
+});
+
 test('preferences and notes validate bounds and starred list uses the shared filter', context => {
   const { store } = fixture(context);
   assert.throws(() => store.setPreferences({ dailyGoal: 0 }));
@@ -388,8 +408,11 @@ test('HTTP practice, preferences and notes persist with origin checks and backup
   const paper = store.createPaper({ examMonth: '2025-06' });
   store.confirmImport({ paperId: paper.id, requestId: randomUUID(), rows: [{ english: 'test', meaning: '测试' }] });
   const word = store.overview().words[0];
-  assert.equal((await send('/api/preferences', { dailyGoal: 15 }, 'PUT')).status, 200);
-  assert.equal((await send('/api/preferences', { dailyGoal: -1 }, 'PUT')).status, 400);
+  const expected = store.preferences();
+  assert.equal((await send('/api/preferences', { dailyGoal: 15 }, 'PUT')).status, 428);
+  assert.equal((await send('/api/preferences', { dailyGoal: 15, expected }, 'PUT')).status, 200);
+  assert.equal((await send('/api/preferences', { dailyGoal: 30, expected }, 'PUT')).status, 409);
+  assert.equal((await send('/api/preferences', { dailyGoal: -1, expected }, 'PUT')).status, 400);
   assert.equal((await send('/api/preferences', { dailyGoal: 20 }, 'PUT', { Origin: 'https://example.com' })).status, 403);
   const details = { starred: true, note: '<script>文本</script>', example: '', translation: '' };
   assert.equal((await send(`/api/words/${word.id}/details`, details, 'PUT')).status, 428);
