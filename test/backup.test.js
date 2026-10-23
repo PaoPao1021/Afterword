@@ -24,7 +24,8 @@ test('live WAL backup is complete, private, unique and restores into a separate 
   assert.equal(statSync(first.filename).mode & 0o777, 0o600);
   assert.equal(readdirSync(backupDirectory).some(name => name.endsWith('.partial')), false);
   restored.restore(JSON.parse(readFileSync(first.filename, 'utf8')));
-  assert.deepEqual(restored.overview(), live.overview());
+  assert.notEqual(restored.session().id, live.session().id);
+  assert.deepEqual({ ...restored.overview(), session: { ...restored.session(), id: live.session().id } }, live.overview());
   assert.throws(() => writeBackup({ dataPath: join(directory, 'missing.sqlite'), directory: backupDirectory }), /不存在/);
 });
 

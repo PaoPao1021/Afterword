@@ -232,7 +232,10 @@ test('backup validates references and queue, restores full state and saves pre-r
     const saved = JSON.parse(readFileSync(result.backupFile, 'utf8'));
     assert.deepEqual(saved.words, JSON.parse(JSON.stringify(before.words)));
     const restored = store.backup();
-    for (const field of ['papers', 'words', 'entries', 'session']) assert.deepEqual(restored[field], backup[field]);
+    for (const field of ['papers', 'words', 'entries']) assert.deepEqual(restored[field], backup[field]);
+    assert.notEqual(restored.session.id, backup.session.id);
+    assert.deepEqual({ ...restored.session, id: backup.session.id }, backup.session);
+    assert.throws(() => store.sessionAction({ sessionId: backup.session.id, revision: backup.session.revision, action: 'remember' }), { status: 409 });
     finish(store);
   } finally { store.close(); rmSync(directory, { recursive: true, force: true }); }
 });

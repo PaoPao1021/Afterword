@@ -37,6 +37,56 @@ function finish(store) {
   while (store.session().phase !== 'done') { assert.ok(limit-- > 0); correctAnswer(store); store.validateBackup(store.backup()); }
 }
 
+test('restoring the same backup rejects stale learning actions on every restore', context => {
+  const { store } = fixture(context);
+  store.startSession({ mode: 'context', practice: 'spelling' });
+  const backup = store.backup();
+  const original = JSON.stringify(backup);
+  for (let attempt = 0; attempt < 2; attempt++) {
+    const stale = store.session();
+    store.restore(backup);
+    const restored = store.session();
+    assert.notEqual(restored.id, stale.id);
+    assert.notEqual(restored.id, backup.session.id);
+    assert.deepEqual({ ...restored, id: backup.session.id }, backup.session);
+    assert.throws(() => store.sessionAction({ sessionId: stale.id, revision: stale.revision, action: 'unknown' }), { status: 409 });
+    assert.deepEqual(store.session(), restored);
+  }
+  assert.equal(JSON.stringify(backup), original);
+  correctAnswer(store);
+  assert.equal(store.session().pending.correct, true);
+});
+
+test('restoring a partially completed group preserves statistics and event grouping', context => {
+  const { store } = fixture(context, 'recall = 回忆\nremember = 记住');
+  store.startSession({ mode: 'context', practice: 'spelling' });
+  correctAnswer(store); act(store, 'continue');
+  const backup = store.backup();
+  const stats = store.overview().stats;
+  store.restore(backup);
+  assert.deepEqual(store.overview().stats, stats);
+  assert.equal(store.backup().events[0].session_id, store.session().id);
+  assert.notEqual(store.session().id, backup.session.id);
+  finish(store);
+  assert.equal(store.overview().stats.totalSessions, 1);
+  assert.equal(store.overview().stats.today.learned, 2);
+  assert.equal(store.backup().events.length, 2);
+});
+
+test('restoring a completed group invalidates stale retry links without splitting history', context => {
+  const { store } = fixture(context, 'recall = 回忆');
+  store.startSession({ mode: 'context', practice: 'spelling' });
+  act(store, 'unknown'); act(store, 'continue'); finish(store);
+  const backup = store.backup();
+  const stats = store.overview().stats;
+  store.restore(backup);
+  assert.deepEqual(store.overview().stats, stats);
+  assert.throws(() => store.startSession({ mode: 'context', retrySessionId: backup.session.id }), { status: 409 });
+  const restored = store.session();
+  assert.equal(store.backup().events[0].session_id, restored.id);
+  assert.equal(store.startSession({ mode: 'context', retrySessionId: restored.id }).items.length, 1);
+});
+
 test('new words pass choice and three meaning recall rounds before spelling and scheduling', context => {
   const { store } = fixture(context, 'remember = 记住');
   store.startSession({ mode: 'context', filter: 'new', size: 1 });
@@ -138,7 +188,8 @@ test('100-word groups and preferences round-trip while out-of-range sizes are re
   const backup = store.backup();
   store.restore(backup);
   assert.equal(store.preferences().groupSize, 100);
-  assert.deepEqual(store.session(), backup.session);
+  assert.notEqual(store.session().id, backup.session.id);
+  assert.deepEqual({ ...store.session(), id: backup.session.id }, backup.session);
 });
 
 test('spelling checks normalized full phrases and keeps wrong or revealed answers in the queue', context => {
@@ -189,7 +240,8 @@ test('backup v2 round-trips pending correction, notes, settings and historical c
   store.startSession({ mode: 'context' }); act(store, 'known'); act(store, 'correct');
   const backup = store.backup();
   store.restore(backup);
-  assert.deepEqual(store.backup().session, backup.session);
+  assert.notEqual(store.session().id, backup.session.id);
+  assert.deepEqual({ ...store.session(), id: backup.session.id }, backup.session);
   assert.deepEqual(store.backup().events, backup.events);
   assert.deepEqual(store.backup().details, backup.details);
   assert.equal(store.overview().preferences.dailyGoal, 30);

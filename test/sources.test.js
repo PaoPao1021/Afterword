@@ -99,10 +99,12 @@ test('source read model preserves v1 backups, shared words and an active review 
     assert.equal(source.label, overview.papers.find(paper => paper.id === source.id).label);
   }
   restored.restore(JSON.parse(JSON.stringify(backup)));
-  assert.deepEqual(restored.overview(), overview);
+  assert.notEqual(restored.session().id, overview.session.id);
+  assert.deepEqual({ ...restored.overview(), session: { ...restored.session(), id: overview.session.id } }, overview);
   const legacy = { ...backup, version: 1 };
   delete legacy.preferences; delete legacy.details; delete legacy.events;
   restored.restore(legacy);
-  assert.deepEqual(restored.overview(), overview);
+  assert.notEqual(restored.session().id, overview.session.id);
+  assert.deepEqual({ ...restored.overview(), session: { ...restored.session(), id: overview.session.id } }, overview);
   assert.equal(restored.get('PRAGMA user_version').user_version, 1);
 });

@@ -130,13 +130,15 @@ test('backup round trips due sessions and schedules, imports old backups and rej
   store.startSession({ filter: 'due' }); action(store, 'next'); action(store, 'reveal');
   const backup = JSON.parse(JSON.stringify(store.backup()));
   store.restore(backup);
-  assert.deepEqual(store.session(), backup.session);
+  const restoredSession = store.session();
+  assert.notEqual(restoredSession.id, backup.session.id);
+  assert.deepEqual({ ...restoredSession, id: backup.session.id }, backup.session);
   assert.equal(store.overview().words[0].due_at, backup.words[0].due_at);
   for (const change of [{ due_at: 'invalid' }, { review_streak: -1 }, { review_streak: 1.5 }, { review_streak: 7 }, { review_streak: 1, due_at: null }, { status: 'new' }]) {
     const invalid = structuredClone(backup);
     Object.assign(invalid.words[0], change);
     assert.throws(() => store.restore(invalid), { status: 400 });
-    assert.deepEqual(store.session(), backup.session);
+    assert.deepEqual(store.session(), restoredSession);
   }
   const legacy = structuredClone(backup);
   delete legacy.words[0].due_at; delete legacy.words[0].review_streak;
