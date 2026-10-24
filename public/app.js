@@ -1,9 +1,10 @@
 import { isReviewDue } from './review.js';
 import { filterWords, wordTable } from './word-list.js';
 import { createDraftCache, hasDraftContent } from './draft-cache.js';
+import { createDialog, escapeHtml } from './dialog.js';
 
 const $ = (selector, root = document) => root.querySelector(selector);
-const h = value => String(value ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+const h = escapeHtml;
 const icons = {
   bookmark: '<path d="M6 3h12v18l-6-4-6 4z"/>',
   pen: '<path d="m15 4 5 5M4 20l5-1L21 7l-5-5L4 14z"/>',
@@ -31,7 +32,7 @@ let data = { papers: [], words: [], session: null };
 let filter = 'all', query = '', paperQuery = '', draft = null, restoreData = null, busy = false, toastTimer;
 let previousRoute = '', pendingNavigation = false;
 let practicePanel = 'context';
-let modalReturnFocus = null, modalInitialValues = null;
+const dialog = createDialog({ element: modal, fallbackFocus: main, isBusy: () => busy });
 let modelStatus = { ready: false, state: 'disabled', message: '接口已预留，暂未启用。', maxSourceLength: 20000 };
 const draftCache = createDraftCache(() => window.sessionStorage);
 const recoveredDraft = draftCache.load();
@@ -86,7 +87,7 @@ function route() {
 }
 function go(path) { if (location.hash === `#${path}`) render(); else location.hash = path; }
 function activeSession() { return data.session && data.session.phase !== 'done'; }
-function button(label, action, style = '', extra = '', glyph = '') { return `<button class="button ${style}" data-action="${action}" ${extra}>${glyph ? icon(glyph) : ''}${label}</button>`; }
+function button(label, action, style = '', extra = '', glyph = '') { return `<button type="button" class="button ${style}" data-action="${action}" ${extra}>${glyph ? icon(glyph) : ''}${label}</button>`; }
 function heading(title, subtitle, action = '') { return `<div class="page-heading"><div><h1>${h(title)}</h1><p class="subtext">${h(subtitle)}</p></div>${action}</div>`; }
 function searchInput(id, placeholder, value = '') { return `<label class="search">${icon('search')}<span class="visually-hidden">${placeholder}</span><input id="${id}" type="search" placeholder="${placeholder}" value="${h(value)}" autocomplete="off"></label>`; }
 function statusTag(value) { return `<span class="status ${value}">${statusName[value]}</span>`; }
@@ -178,7 +179,7 @@ function renderWords(paperId) {
   const words = data.words.filter(w => !paperId || w.sources.some(s => s.paperId === paperId));
   main.innerHTML = `${paper ? `<a class="back" href="#/papers">${icon('back')} 返回试卷</a>` : ''}${heading(paper?.label || '全部词条', paper ? `${words.length} 个词条 · 已掌握 ${words.filter(w => w.status === 'mastered').length} 个 · 录入 ${new Date(paper.created_at).toLocaleDateString('zh-CN')}` : '查看所有试卷的词条，按掌握程度筛选。', `<div class="actions">${button('录入词条', 'import', '', paper ? `data-paper="${paperId}"` : '', 'plus')}${button('开始复习', 'start-dialog', 'primary', paper ? `data-paper="${paperId}"` : '', 'play')}</div>`)}${resumeBanner()}
     <div class="toolbar"><div class="tabs" role="group" aria-label="掌握程度筛选">${[['all', '全部词条'], ['due', '到期复习'], ['new', '未学习'], ['unfamiliar', '不熟悉'], ['mastered', '已掌握'], ['starred', '已收藏']].map(([value, label]) => `<button class="tab ${filter === value ? 'active' : ''}" data-action="filter" data-value="${value}" aria-pressed="${filter === value}">${label}</button>`).join('')}</div>${searchInput('word-search', '搜索英文或中文释义', query)}</div>
-    <div class="word-list"><div class="word-header"><span>英文</span><span>释义与来源</span><span>掌握程度</span><span>管理</span></div><div id="word-rows"></div></div><div class="toolbar"><p class="helper-note" id="word-count"></p><div class="actions">${button('导出当前词表', 'export-words', '', '', 'download')}${paper ? button('删除这套试卷', 'delete-paper', 'text', `data-id="${paperId}"`) : ''}</div></div><p class="helper-note">导出当前搜索与筛选结果，为英文、中文两列 TXT；完整来源和复习进度请使用数据备份。</p>`;
+    <div class="word-list"><div class="word-header"><span>英文</span><span>释义与来源</span><span>掌握程度</span><span>管理</span></div><div id="word-rows"></div></div><div class="toolbar"><p class="helper-note" id="word-count"></p><div class="actions">${button('导出当前词表', 'export-words', '', '', 'download')}${paper ? button('删除这套试卷', 'delete-paper', 'text danger', `data-id="${paperId}"`) : ''}</div></div><p class="helper-note">导出当前搜索与筛选结果，为英文、中文两列 TXT；完整来源和复习进度请使用数据备份。</p>`;
   renderWordRows();
   if (filter === 'starred') $('[data-action="start-dialog"]').textContent = '练习收藏词';
 }
@@ -312,40 +313,10 @@ function studyDefinitions(sources) {
   }
   return [...groups.values()].map(({ meanings, labels }) => `<div class="study-meaning-block">${meanings.map(h).join('；')}${labels.length === 1 ? `<p class="source-line">${h(labels[0])}</p>` : `<details class="study-sources"><summary>来自 ${labels.length} 套试卷</summary><ul>${labels.map(label => `<li>${h(label)}</li>`).join('')}</ul></details>`}</div>`).join('');
 }
-function showModal(title, content) {
-  if (!modal.open) modalReturnFocus = document.activeElement;
-  modal.innerHTML = `<div class="modal-heading"><h2 id="modal-title">${h(title)}</h2><button class="close-button" data-action="close-modal" aria-label="关闭">×</button></div>${content}<p class="modal-error" id="modal-error" role="alert"></p>`;
-  modalInitialValues = modalFormValues();
-  if (!modal.open) modal.showModal();
-  modal.scrollTop = 0;
-  const target = $('form input:not([type=checkbox]), form textarea, form select', modal) || $('#modal-title');
-  if (target.id === 'modal-title') target.tabIndex = -1;
-  target.focus({ preventScroll: true });
-}
-function modalFormValues() {
-  const form = $('#note-form, #entry-form, #paper-form', modal);
-  return form ? JSON.stringify([...form.querySelectorAll('input, textarea, select')].map(field => [field.name, field.value, field.checked === true])) : null;
-}
-function modalIsDirty() { return modal.open && modalInitialValues !== null && modalFormValues() !== modalInitialValues; }
-function requestCloseModal() {
-  if (!modalIsDirty()) return closeModal();
-  if (!$('#modal-discard')) {
-    $('.modal-heading', modal).insertAdjacentHTML('afterend', `<div id="modal-discard" class="modal-discard" role="alert"><strong>还有未保存的修改</strong><p>关闭后，这次输入将丢失。要继续编辑吗？</p><div class="actions">${button('继续编辑', 'keep-editing', 'primary')}${button('放弃修改', 'discard-modal', 'text')}</div></div>`);
-  }
-  modal.scrollTop = 0;
-  $('[data-action="keep-editing"]', modal).focus();
-}
-function closeModal() { modalInitialValues = null; modal.close(); }
-modal.addEventListener('cancel', event => { event.preventDefault(); if (!busy) requestCloseModal(); });
-modal.addEventListener('close', () => {
-  if (modal.open) return;
-  modalInitialValues = null;
-  const target = modalReturnFocus?.isConnected ? modalReturnFocus : main;
-  modalReturnFocus = null;
-  target.focus({ preventScroll: true });
-});
+function showModal(title, content, kind = 'dialog') { dialog.show({ title, content, kind }); }
+function closeModal() { dialog.close(); }
 function newPaperDialog(context = '') {
-  showModal('新建试卷', `<p class="modal-description">按试卷上的考试年月归档，同一个月份可以有不同套卷。</p><form id="paper-form" data-context="${context}"><div class="form-grid"><div class="field"><label for="exam-month">考试年月</label><input type="month" id="exam-month" name="examMonth" min="1900-01" max="2199-12" required></div><div class="field"><label for="paper-volume">套卷编号</label><input id="paper-volume" name="volume" type="number" min="1" max="99" step="1" placeholder="留空表示未注明"><small>例如：1 表示第 1 套。</small></div></div><div class="modal-actions">${button('取消', 'close-modal')}<button class="button primary" type="submit">创建试卷</button></div></form>`);
+  showModal('新建试卷', `<p class="modal-description">按试卷上的考试年月归档，同一个月份可以有不同套卷。</p><form data-guard-unsaved id="paper-form" data-context="${context}"><div class="form-grid"><div class="field"><label for="exam-month">考试年月</label><input type="month" id="exam-month" name="examMonth" min="1900-01" max="2199-12" required></div><div class="field"><label for="paper-volume">套卷编号</label><input id="paper-volume" name="volume" type="number" min="1" max="99" step="1" placeholder="留空表示未注明"><small>例如：1 表示第 1 套。</small></div></div><div class="modal-actions">${button('取消', 'close-modal')}<button class="button primary" type="submit">创建试卷</button></div></form>`);
 }
 function studyForm(paperId = '', inDialog = false, requestedFilter = null) {
   const selected = requestedFilter || (['new', 'unfamiliar', 'due', 'starred'].includes(filter) ? filter : filterWords(data.words, { paperId, filter: 'due' }).length ? 'due' : filterWords(data.words, { paperId, filter: 'new' }).length ? 'new' : 'all');
@@ -377,11 +348,11 @@ function studyDialog(paperId = '', requestedFilter = null) {
 function wordDetail(id) {
   const word = data.words.find(w => w.id === id); if (!word) return;
   const sources = word.sources.filter(s => !route().paperId || s.paperId === route().paperId);
-  showModal(word.english, `<p class="detail-label">词条详情</p><div class="actions">${statusTag(word.status)}${button('听发音', 'pronounce', 'text', `data-id="${word.id}"`)}${button(word.details.starred ? '取消收藏' : '收藏', 'toggle-star', 'text', `data-id="${word.id}" aria-pressed="${word.details.starred}"`)}</div><p class="word-review">${h(reviewNote(word))}</p>${sources.map(s => `<div class="detail-source"><p class="source-line">${h(s.label)}</p><p class="word-meaning">${s.meanings.map(h).join('；')}</p><div class="actions">${button('编辑', 'edit-entry', 'text small', `data-id="${s.id}"`)}${button('从这套试卷移除', 'delete-entry', 'text small', `data-id="${s.id}"`)}</div></div>`).join('')}<div class="detail-source"><h3>我的语境与笔记</h3>${word.details.example ? `<blockquote>${h(word.details.example)}</blockquote><p>${h(word.details.translation)}</p>` : ''}<p class="saved-note">${h(word.details.note || '还没有记录，试着写下它在试卷里的原句。')}</p>${button('编辑笔记', 'edit-note', 'text', `data-id="${word.id}"`)}</div><p class="helper-note">掌握状态和复习计划在所有试卷间共享，释义按试卷独立保存。</p>`);
+  showModal(word.english, `<p class="detail-label">词条详情</p><div class="actions">${statusTag(word.status)}${button('听发音', 'pronounce', 'text', `data-id="${word.id}"`)}${button(word.details.starred ? '取消收藏' : '收藏', 'toggle-star', 'text', `data-id="${word.id}" aria-pressed="${word.details.starred}"`)}</div><p class="word-review">${h(reviewNote(word))}</p>${sources.map(s => `<div class="detail-source"><p class="source-line">${h(s.label)}</p><p class="word-meaning">${s.meanings.map(h).join('；')}</p><div class="actions">${button('编辑', 'edit-entry', 'text small', `data-id="${s.id}"`)}${button('从这套试卷移除', 'delete-entry', 'text danger small', `data-id="${s.id}"`)}</div></div>`).join('')}<div class="detail-source"><h3>我的语境与笔记</h3>${word.details.example ? `<blockquote>${h(word.details.example)}</blockquote><p>${h(word.details.translation)}</p>` : ''}<p class="saved-note">${h(word.details.note || '还没有记录，试着写下它在试卷里的原句。')}</p>${button('编辑笔记', 'edit-note', 'text', `data-id="${word.id}"`)}</div><p class="helper-note">掌握状态和复习计划在所有试卷间共享，释义按试卷独立保存。</p>`, 'sheet');
 }
 function noteDialog(id) {
   const word = data.words.find(word => word.id === id); if (!word) return;
-  showModal(`${word.english} · 我的笔记`, `<form id="note-form" data-id="${id}"><div class="field"><label for="note-example">语境原句</label><textarea id="note-example" name="example" maxlength="5000" placeholder="粘贴试卷里的原句，不自动编造例句。">${h(word.details.example)}</textarea></div><div class="field"><label for="note-translation">原句译文</label><textarea id="note-translation" name="translation" maxlength="5000">${h(word.details.translation)}</textarea></div><div class="field"><label for="note-text">搭配、词根或记忆联想</label><textarea id="note-text" name="note" maxlength="5000">${h(word.details.note)}</textarea></div><div class="modal-actions">${button('取消', 'close-modal')}<button class="button primary" type="submit">保存笔记</button></div></form>`);
+  showModal(`${word.english} · 我的笔记`, `<form data-guard-unsaved id="note-form" data-id="${id}"><div class="field"><label for="note-example">语境原句</label><textarea id="note-example" name="example" maxlength="5000" placeholder="粘贴试卷里的原句，不自动编造例句。">${h(word.details.example)}</textarea></div><div class="field"><label for="note-translation">原句译文</label><textarea id="note-translation" name="translation" maxlength="5000">${h(word.details.translation)}</textarea></div><div class="field"><label for="note-text">搭配、词根或记忆联想</label><textarea id="note-text" name="note" maxlength="5000">${h(word.details.note)}</textarea></div><div class="modal-actions">${button('取消', 'close-modal')}<button class="button primary" type="submit">保存笔记</button></div></form>`, 'sheet');
   $('#note-form', modal).dataset.baseline = JSON.stringify(word.details);
 }
 function pronounce(text, accent = data.preferences.accent) {
@@ -397,9 +368,9 @@ function pronounce(text, accent = data.preferences.accent) {
 function findEntry(id) { for (const word of data.words) { const source = word.sources.find(s => s.id === id); if (source) return { word, source }; } return null; }
 function editDialog(id) {
   const item = findEntry(id); if (!item) return;
-  showModal('编辑词条', `<p class="modal-description">${h(item.source.label)}</p><form id="entry-form" data-id="${id}"><div class="field"><label for="entry-english">英文</label><input id="entry-english" name="english" maxlength="300" value="${h(item.word.english)}" required></div><div class="field"><label for="entry-meaning">中文释义</label><textarea id="entry-meaning" name="meaning" maxlength="5000" required>${h(item.source.meanings.join('\n'))}</textarea></div>${activeSession() && data.session.items.some(i => i.wordId === item.word.id) ? '<p class="notice warning">这个词在当前学习组中。保存修改会结束该组，已记录的掌握状态保留。</p>' : ''}<div class="modal-actions">${button('取消', 'close-modal')}<button type="submit" class="button primary">保存修改</button></div></form>`);
+  showModal('编辑词条', `<p class="modal-description">${h(item.source.label)}</p><form data-guard-unsaved id="entry-form" data-id="${id}"><div class="field"><label for="entry-english">英文</label><input id="entry-english" name="english" maxlength="300" value="${h(item.word.english)}" required></div><div class="field"><label for="entry-meaning">中文释义</label><textarea id="entry-meaning" name="meaning" maxlength="5000" required>${h(item.source.meanings.join('\n'))}</textarea></div>${activeSession() && data.session.items.some(i => i.wordId === item.word.id) ? '<p class="notice warning">这个词在当前学习组中。保存修改会结束该组，已记录的掌握状态保留。</p>' : ''}<div class="modal-actions">${button('取消', 'close-modal')}<button type="submit" class="button primary">保存修改</button></div></form>`, 'sheet');
 }
-function confirmDialog(title, message, action, extra = '') { showModal(title, `<p class="modal-description">${h(message)}</p><div class="modal-actions">${button('取消', 'close-modal')}${button('确认', action, 'danger', extra)}</div>`); }
+function confirmDialog(title, message, action, extra = '') { showModal(title, `<p class="modal-description">${h(message)}</p><div class="modal-actions">${button('取消', 'close-modal')}${button('确认', action, 'danger', extra)}</div>`, 'alert'); }
 async function studyAction(action, answer) {
   const s = data.session;
   if (action === 'continue') practicePanel = 'context';
@@ -441,13 +412,9 @@ async function handleAction(element) {
     if (hasDraftContent(draft) && !window.confirm('退出会清空当前标签页的录入草稿，包括模型原文和预览修改。确认退出？')) return;
     await api('/logout', {}); draft = null; persistDraft(); location.assign('/login'); return;
   }
-  if (action === 'close-modal') return requestCloseModal();
+  if (action === 'close-modal') return dialog.requestClose();
   if (action === 'discard-modal') return closeModal();
-  if (action === 'keep-editing') {
-    $('#modal-discard')?.remove();
-    requestAnimationFrame(() => $('form input:not([type=checkbox]), form textarea, form select', modal)?.focus());
-    return;
-  }
+  if (action === 'keep-editing') return dialog.keepEditing();
   if (action === 'new-paper') return newPaperDialog(element.dataset.context || '');
   if (action === 'import') return go(`/import${element.dataset.paper ? `?paper=${element.dataset.paper}` : ''}`);
   if (action === 'start-dialog') return studyDialog(element.dataset.paper || '', element.dataset.filter || null);
@@ -681,7 +648,7 @@ document.addEventListener('visibilitychange', () => {
 });
 window.addEventListener('pagehide', persistDraft);
 window.addEventListener('beforeunload', event => {
-  if (!hasDraftContent(draft) && !modalIsDirty()) return;
+  if (!hasDraftContent(draft) && !dialog.isDirty()) return;
   persistDraft(); event.preventDefault(); event.returnValue = '';
 });
 try { await refresh(); render(); }

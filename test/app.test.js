@@ -329,11 +329,20 @@ test('HTTP APIs and static app: UTF-8 streams, safe content handling and origin 
   const pageHtml = await page.text();
   assert.match(pageHtml, /Afterword/);
   assert.match(pageHtml, /<link rel="stylesheet" href="\/ui.css">/);
+  assert.match(pageHtml, /<link rel="stylesheet" href="\/components.css">/);
   for (const file of ['/app.js', '/review.js', '/word-list.js', '/style.css', '/practice.css', '/favicon.svg']) assert.equal((await fetch(base + file)).status, 200);
   const uiStyles = await fetch(base + '/ui.css');
   assert.equal(uiStyles.status, 200);
   assert.match(uiStyles.headers.get('content-type'), /text\/css/);
-  assert.match(await uiStyles.text(), /prefers-reduced-motion/);
+  assert.match(await uiStyles.text(), /\.home-grid/);
+  const componentStyles = await fetch(base + '/components.css');
+  assert.equal(componentStyles.status, 200);
+  assert.match(componentStyles.headers.get('content-type'), /text\/css/);
+  assert.match(await componentStyles.text(), /prefers-reduced-motion/);
+  const dialogModule = await fetch(base + '/dialog.js');
+  assert.equal(dialogModule.status, 200);
+  assert.match(dialogModule.headers.get('content-type'), /text\/javascript/);
+  assert.match(await dialogModule.text(), /export function createDialog/);
   const paper = await post('/api/papers', { examMonth: '2025-06', volume: 1 });
   const payload = Buffer.from(JSON.stringify({ paperId: paper.id, text: 'example = 中文释义\n<img src=x onerror=alert(1)>\t<script>文本</script>' }));
   const streamed = await new Promise((resolve, reject) => {
