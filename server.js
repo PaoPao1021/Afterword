@@ -105,7 +105,7 @@ export function createApp({ dataPath = join(root, 'data', 'cet6.sqlite'), llm = 
       }
       if (req.method === 'POST' && path === '/api/backup/preview') return json(200, store.validateBackup(body));
       if (req.method === 'POST' && path === '/api/backup/restore') return json(200, store.restore(body));
-      const assets = { '/': ['index.html', 'text/html; charset=utf-8'], '/draft-cache.js': ['draft-cache.js', 'text/javascript; charset=utf-8'], '/app.js': ['app.js', 'text/javascript; charset=utf-8'], '/review.js': ['../lib/review.js', 'text/javascript; charset=utf-8'], '/word-list.js': ['../lib/word-list.js', 'text/javascript; charset=utf-8'], '/style.css': ['style.css', 'text/css; charset=utf-8'], '/practice.css': ['practice.css', 'text/css; charset=utf-8'], '/favicon.svg': ['favicon.svg', 'image/svg+xml'] };
+      const assets = { '/ui.css': ['ui.css', 'text/css; charset=utf-8'], '/': ['index.html', 'text/html; charset=utf-8'], '/draft-cache.js': ['draft-cache.js', 'text/javascript; charset=utf-8'], '/app.js': ['app.js', 'text/javascript; charset=utf-8'], '/review.js': ['../lib/review.js', 'text/javascript; charset=utf-8'], '/word-list.js': ['../lib/word-list.js', 'text/javascript; charset=utf-8'], '/style.css': ['style.css', 'text/css; charset=utf-8'], '/practice.css': ['practice.css', 'text/css; charset=utf-8'], '/favicon.svg': ['favicon.svg', 'image/svg+xml'] };
       if (req.method === 'GET' && assets[path]) {
         const [file, type] = assets[path]; const content = await readFile(join(root, 'public', file));
         res.writeHead(200, { 'Content-Type': type, 'Cache-Control': 'no-cache' }); return res.end(content);

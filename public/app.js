@@ -31,6 +31,7 @@ let data = { papers: [], words: [], session: null };
 let filter = 'all', query = '', paperQuery = '', draft = null, restoreData = null, busy = false, toastTimer;
 let previousRoute = '', pendingNavigation = false;
 let practicePanel = 'context';
+let modalReturnFocus = null, modalInitialValues = null;
 let modelStatus = { ready: false, state: 'disabled', message: '接口已预留，暂未启用。', maxSourceLength: 20000 };
 const draftCache = createDraftCache(() => window.sessionStorage);
 const recoveredDraft = draftCache.load();
@@ -312,10 +313,37 @@ function studyDefinitions(sources) {
   return [...groups.values()].map(({ meanings, labels }) => `<div class="study-meaning-block">${meanings.map(h).join('；')}${labels.length === 1 ? `<p class="source-line">${h(labels[0])}</p>` : `<details class="study-sources"><summary>来自 ${labels.length} 套试卷</summary><ul>${labels.map(label => `<li>${h(label)}</li>`).join('')}</ul></details>`}</div>`).join('');
 }
 function showModal(title, content) {
+  if (!modal.open) modalReturnFocus = document.activeElement;
   modal.innerHTML = `<div class="modal-heading"><h2 id="modal-title">${h(title)}</h2><button class="close-button" data-action="close-modal" aria-label="关闭">×</button></div>${content}<p class="modal-error" id="modal-error" role="alert"></p>`;
+  modalInitialValues = modalFormValues();
   if (!modal.open) modal.showModal();
+  modal.scrollTop = 0;
+  const target = $('form input:not([type=checkbox]), form textarea, form select', modal) || $('#modal-title');
+  if (target.id === 'modal-title') target.tabIndex = -1;
+  target.focus({ preventScroll: true });
 }
-function closeModal() { modal.close(); }
+function modalFormValues() {
+  const form = $('#note-form, #entry-form, #paper-form', modal);
+  return form ? JSON.stringify([...form.querySelectorAll('input, textarea, select')].map(field => [field.name, field.value, field.checked === true])) : null;
+}
+function modalIsDirty() { return modal.open && modalInitialValues !== null && modalFormValues() !== modalInitialValues; }
+function requestCloseModal() {
+  if (!modalIsDirty()) return closeModal();
+  if (!$('#modal-discard')) {
+    $('.modal-heading', modal).insertAdjacentHTML('afterend', `<div id="modal-discard" class="modal-discard" role="alert"><strong>还有未保存的修改</strong><p>关闭后，这次输入将丢失。要继续编辑吗？</p><div class="actions">${button('继续编辑', 'keep-editing', 'primary')}${button('放弃修改', 'discard-modal', 'text')}</div></div>`);
+  }
+  modal.scrollTop = 0;
+  $('[data-action="keep-editing"]', modal).focus();
+}
+function closeModal() { modalInitialValues = null; modal.close(); }
+modal.addEventListener('cancel', event => { event.preventDefault(); if (!busy) requestCloseModal(); });
+modal.addEventListener('close', () => {
+  if (modal.open) return;
+  modalInitialValues = null;
+  const target = modalReturnFocus?.isConnected ? modalReturnFocus : main;
+  modalReturnFocus = null;
+  target.focus({ preventScroll: true });
+});
 function newPaperDialog(context = '') {
   showModal('新建试卷', `<p class="modal-description">按试卷上的考试年月归档，同一个月份可以有不同套卷。</p><form id="paper-form" data-context="${context}"><div class="form-grid"><div class="field"><label for="exam-month">考试年月</label><input type="month" id="exam-month" name="examMonth" min="1900-01" max="2199-12" required></div><div class="field"><label for="paper-volume">套卷编号</label><input id="paper-volume" name="volume" type="number" min="1" max="99" step="1" placeholder="留空表示未注明"><small>例如：1 表示第 1 套。</small></div></div><div class="modal-actions">${button('取消', 'close-modal')}<button class="button primary" type="submit">创建试卷</button></div></form>`);
 }
@@ -413,7 +441,13 @@ async function handleAction(element) {
     if (hasDraftContent(draft) && !window.confirm('退出会清空当前标签页的录入草稿，包括模型原文和预览修改。确认退出？')) return;
     await api('/logout', {}); draft = null; persistDraft(); location.assign('/login'); return;
   }
-  if (action === 'close-modal') return closeModal();
+  if (action === 'close-modal') return requestCloseModal();
+  if (action === 'discard-modal') return closeModal();
+  if (action === 'keep-editing') {
+    $('#modal-discard')?.remove();
+    requestAnimationFrame(() => $('form input:not([type=checkbox]), form textarea, form select', modal)?.focus());
+    return;
+  }
   if (action === 'new-paper') return newPaperDialog(element.dataset.context || '');
   if (action === 'import') return go(`/import${element.dataset.paper ? `?paper=${element.dataset.paper}` : ''}`);
   if (action === 'start-dialog') return studyDialog(element.dataset.paper || '', element.dataset.filter || null);
@@ -647,7 +681,7 @@ document.addEventListener('visibilitychange', () => {
 });
 window.addEventListener('pagehide', persistDraft);
 window.addEventListener('beforeunload', event => {
-  if (!hasDraftContent(draft)) return;
+  if (!hasDraftContent(draft) && !modalIsDirty()) return;
   persistDraft(); event.preventDefault(); event.returnValue = '';
 });
 try { await refresh(); render(); }

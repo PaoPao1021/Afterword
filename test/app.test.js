@@ -326,8 +326,14 @@ test('HTTP APIs and static app: UTF-8 streams, safe content handling and origin 
   };
   const page = await fetch(base);
   assert.equal(page.status, 200); assert.match(page.headers.get('content-security-policy'), /script-src 'self'/);
-  assert.match(await page.text(), /Afterword/);
+  const pageHtml = await page.text();
+  assert.match(pageHtml, /Afterword/);
+  assert.match(pageHtml, /<link rel="stylesheet" href="\/ui.css">/);
   for (const file of ['/app.js', '/review.js', '/word-list.js', '/style.css', '/practice.css', '/favicon.svg']) assert.equal((await fetch(base + file)).status, 200);
+  const uiStyles = await fetch(base + '/ui.css');
+  assert.equal(uiStyles.status, 200);
+  assert.match(uiStyles.headers.get('content-type'), /text\/css/);
+  assert.match(await uiStyles.text(), /prefers-reduced-motion/);
   const paper = await post('/api/papers', { examMonth: '2025-06', volume: 1 });
   const payload = Buffer.from(JSON.stringify({ paperId: paper.id, text: 'example = 中文释义\n<img src=x onerror=alert(1)>\t<script>文本</script>' }));
   const streamed = await new Promise((resolve, reject) => {
